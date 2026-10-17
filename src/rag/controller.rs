@@ -14,6 +14,8 @@ use async_channel::{Sender, TrySendError};
 use gpui_kit::{Context, EventEmitter};
 
 use crate::model::{AgentComponent, ComponentKind, ComponentStatus, SessionEntry};
+#[cfg(feature = "grobid")]
+use crate::references::{ReferenceEntry, ReferenceOptions, ReferenceProgress, ReferenceReport};
 
 use super::{
     AgentInfo, IngestProgress, LibrarySnapshot, PendingAttachment, RagCommand, RagEvent, RagSetup,
@@ -34,6 +36,18 @@ pub struct RagController {
     last_error: Option<String>,
     last_notice: Option<String>,
     next_request: u64,
+    #[cfg(feature = "grobid")]
+    references: Vec<ReferenceEntry>,
+    #[cfg(feature = "grobid")]
+    reference_bibliography: Option<PathBuf>,
+    #[cfg(feature = "grobid")]
+    reference_report: Option<ReferenceReport>,
+    #[cfg(feature = "grobid")]
+    reference_progress: Option<ReferenceProgress>,
+    #[cfg(feature = "grobid")]
+    reference_request: Option<RequestId>,
+    #[cfg(feature = "grobid")]
+    reference_folder: Option<PathBuf>,
 }
 
 impl RagController {
@@ -73,6 +87,18 @@ impl RagController {
             last_error: None,
             last_notice: None,
             next_request: 0,
+            #[cfg(feature = "grobid")]
+            references: Vec::new(),
+            #[cfg(feature = "grobid")]
+            reference_bibliography: None,
+            #[cfg(feature = "grobid")]
+            reference_report: None,
+            #[cfg(feature = "grobid")]
+            reference_progress: None,
+            #[cfg(feature = "grobid")]
+            reference_request: None,
+            #[cfg(feature = "grobid")]
+            reference_folder: None,
         };
         // The worker announces ready, the library, and the session list as
         // soon as its agent is built.
@@ -154,6 +180,45 @@ impl RagController {
         }
     }
 
+    /// Parse `folder` with GROBID and merge fresh records into the workspace
+    /// bibliography.
+    #[cfg(feature = "grobid")]
+    pub fn extract_references(
+        &mut self,
+        folder: impl Into<PathBuf>,
+        options: ReferenceOptions,
+        cx: &mut Context<Self>,
+    ) -> Result<RequestId, String> {
+        let folder = folder.into();
+        let id = self.request_id();
+        self.reference_folder = Some(folder.clone());
+        self.send(
+            RagCommand::ExtractReferences {
+                id,
+                folder,
+                options,
+            },
+            cx,
+        )?;
+        Ok(id)
+    }
+
+    /// Stop the running reference extraction.
+    #[cfg(feature = "grobid")]
+    pub fn stop_references(&mut self, cx: &mut Context<Self>) {
+        if let Some(id) = self.reference_request {
+            self.send_quiet(RagCommand::StopReferences { id }, cx);
+        }
+    }
+
+    /// Load the workspace bibliography without contacting GROBID.
+    #[cfg(feature = "grobid")]
+    pub fn refresh_references(&mut self, folder: impl Into<PathBuf>, cx: &mut Context<Self>) {
+        let folder = folder.into();
+        self.reference_folder = Some(folder.clone());
+        self.send_quiet(RagCommand::RefreshReferences { folder }, cx);
+    }
+
     /// Rebuild the agent with new configuration.
     pub fn apply(&mut self, setup: RagSetup, cx: &mut Context<Self>) {
         self.agent = None;
@@ -164,12 +229,26 @@ impl RagController {
         self.library = LibrarySnapshot::default();
         self.last_error = None;
         self.last_notice = None;
+        #[cfg(feature = "grobid")]
+        let reference_folder = self.reference_folder.clone();
+        #[cfg(feature = "grobid")]
+        {
+            self.references.clear();
+            self.reference_bibliography = None;
+            self.reference_report = None;
+            self.reference_progress = None;
+            self.reference_request = None;
+        }
         self.send_quiet(
             RagCommand::Apply {
                 setup: Box::new(setup),
             },
             cx,
         );
+        #[cfg(feature = "grobid")]
+        if let Some(folder) = reference_folder {
+            self.send_quiet(RagCommand::RefreshReferences { folder }, cx);
+        }
     }
 
     /// Saved conversations, newest first.
@@ -207,6 +286,36 @@ impl RagController {
         self.ingest.is_some()
     }
 
+    /// Reference rows loaded from the workspace bibliography.
+    #[cfg(feature = "grobid")]
+    pub fn references(&self) -> &[ReferenceEntry] {
+        &self.references
+    }
+
+    /// The `.bib` file backing the reference rows.
+    #[cfg(feature = "grobid")]
+    pub fn reference_bibliography(&self) -> Option<&std::path::Path> {
+        self.reference_bibliography.as_deref()
+    }
+
+    /// What the last reference extraction did.
+    #[cfg(feature = "grobid")]
+    pub fn reference_report(&self) -> Option<&ReferenceReport> {
+        self.reference_report.as_ref()
+    }
+
+    /// Progress of the running reference extraction.
+    #[cfg(feature = "grobid")]
+    pub fn reference_progress(&self) -> Option<&ReferenceProgress> {
+        self.reference_progress.as_ref()
+    }
+
+    /// Whether GROBID is currently parsing a corpus.
+    #[cfg(feature = "grobid")]
+    pub fn is_extracting_references(&self) -> bool {
+        self.reference_progress.is_some()
+    }
+
     /// The last fatal error.
     pub fn error(&self) -> Option<&str> {
         self.last_error.as_deref()
@@ -218,6 +327,10 @@ impl RagController {
             return error.clone();
         }
         if let Some(progress) = &self.ingest {
+            return progress.summary();
+        }
+        #[cfg(feature = "grobid")]
+        if let Some(progress) = &self.reference_progress {
             return progress.summary();
         }
         if self.busy {
@@ -245,7 +358,7 @@ impl RagController {
             } else {
                 ComponentStatus::Inactive
             };
-            return [
+            let mut components: Vec<AgentComponent> = [
                 (ComponentKind::Chat, "Chat model"),
                 (ComponentKind::Embedder, "Embedder"),
                 (ComponentKind::Store, "Vector store"),
@@ -256,6 +369,12 @@ impl RagController {
             .into_iter()
             .map(|(kind, label)| AgentComponent::new(kind_label(kind), kind, label).status(status))
             .collect();
+            #[cfg(feature = "grobid")]
+            components.push(
+                AgentComponent::new("references", ComponentKind::References, "GROBID")
+                    .status(status),
+            );
+            return components;
         };
 
         let pipeline = if self.ingest.is_some() {
@@ -269,7 +388,7 @@ impl RagController {
             ComponentStatus::Ready
         };
 
-        vec![
+        let mut components = vec![
             AgentComponent::new("chat", ComponentKind::Chat, agent.chat_model.clone())
                 .status(chat)
                 .detail(format!("{} · {} memory", agent.chat_backend, agent.memory)),
@@ -295,7 +414,33 @@ impl RagController {
             AgentComponent::new("retriever", ComponentKind::Retriever, "Hybrid retrieval")
                 .status(pipeline)
                 .detail(format!("top {}", agent.top_k)),
-        ]
+        ];
+        #[cfg(feature = "grobid")]
+        {
+            let status = if self.reference_progress.is_some() {
+                ComponentStatus::Busy
+            } else if self.references.is_empty() {
+                ComponentStatus::Inactive
+            } else {
+                ComponentStatus::Ready
+            };
+            let detail = match &self.reference_bibliography {
+                Some(path) => format!(
+                    "{} · {}",
+                    count_label(self.references.len(), "reference", "references"),
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("references.bib")
+                ),
+                None => count_label(self.references.len(), "reference", "references"),
+            };
+            components.push(
+                AgentComponent::new("references", ComponentKind::References, "GROBID")
+                    .status(status)
+                    .detail(detail),
+            );
+        }
+        components
     }
 
     fn request_id(&mut self) -> RequestId {
@@ -358,6 +503,42 @@ impl RagController {
                     agent.documents = snapshot.documents.len();
                 }
             }
+            #[cfg(feature = "grobid")]
+            RagEvent::ReferencesStarted { id, folder } => {
+                self.reference_request = Some(*id);
+                self.reference_folder = Some(folder.clone());
+                self.reference_progress = Some(ReferenceProgress::default());
+                self.last_error = None;
+            }
+            #[cfg(feature = "grobid")]
+            RagEvent::ReferencesProgress { progress, .. } => {
+                self.reference_progress = Some(progress.clone());
+            }
+            #[cfg(feature = "grobid")]
+            RagEvent::ReferencesLoaded {
+                entries,
+                bibliography,
+            } => {
+                self.references = entries.clone();
+                self.reference_bibliography = Some(bibliography.clone());
+            }
+            #[cfg(feature = "grobid")]
+            RagEvent::ReferencesFinished { report, .. } => {
+                self.reference_report = Some(report.clone());
+                self.reference_progress = None;
+                self.reference_request = None;
+            }
+            #[cfg(feature = "grobid")]
+            RagEvent::ReferencesStopped { .. } => {
+                self.reference_progress = None;
+                self.reference_request = None;
+            }
+            #[cfg(feature = "grobid")]
+            RagEvent::ReferencesFailed { message, .. } => {
+                self.reference_progress = None;
+                self.reference_request = None;
+                self.last_error = Some(message.clone());
+            }
             RagEvent::SyncStarted { id, corpus } => {
                 self.sync_request = Some(*id);
                 self.last_error = None;
@@ -408,6 +589,7 @@ fn kind_label(kind: ComponentKind) -> &'static str {
         ComponentKind::Chunker => "chunker",
         ComponentKind::Retriever => "retriever",
         ComponentKind::Vision => "vision",
+        ComponentKind::References => "references",
         ComponentKind::Other => "component",
     }
 }

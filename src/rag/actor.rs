@@ -18,6 +18,8 @@ use std::{
 };
 
 use async_channel::{Receiver, Sender, TrySendError};
+#[cfg(feature = "grobid")]
+use ragrig::progress::Cancel as _;
 use ragrig::{
     Cancelled, ChatAgentSpec, ChunkConfig, DocumentParsers, EmbedderSpec, FolderCorpus,
     FsSessionStore, LogHistory, MemoryStrategyKind, ProgressEvent, RagAgent, RagResponse,
@@ -31,6 +33,10 @@ use ragrig::{
 };
 
 use crate::model::SourceRef;
+#[cfg(feature = "grobid")]
+use crate::references::{
+    self, ExtractionError, ExtractionObserver, ReferenceOptions, ReferenceProgress,
+};
 
 use super::{
     AgentInfo, AttachmentSource, IngestPhase, IngestProgress, LibraryDocument, LibrarySnapshot,
@@ -56,6 +62,8 @@ struct Shared {
     cancels: Mutex<HashMap<RequestId, CancellationToken>>,
     generating: AtomicBool,
     syncing: AtomicBool,
+    #[cfg(feature = "grobid")]
+    referencing: AtomicBool,
 }
 
 /// Start the worker thread.
@@ -105,6 +113,8 @@ async fn run(
         cancels: Mutex::new(HashMap::new()),
         generating: AtomicBool::new(false),
         syncing: AtomicBool::new(false),
+        #[cfg(feature = "grobid")]
+        referencing: AtomicBool::new(false),
     });
 
     if shared.session.lock().await.is_none() {
@@ -241,6 +251,52 @@ async fn handle(command: RagCommand, shared: Arc<Shared>, events: Sender<RagEven
         RagCommand::StopSync { id } => {
             if let Some(cancel) = shared.cancels.lock().expect("cancel map").remove(&id) {
                 cancel.cancel();
+            }
+        }
+        #[cfg(feature = "grobid")]
+        RagCommand::ExtractReferences {
+            id,
+            folder,
+            options,
+        } => {
+            if shared.referencing.swap(true, Ordering::AcqRel) {
+                let _ = events
+                    .send(RagEvent::ReferencesFailed {
+                        id,
+                        message: "a reference extraction is already running".to_owned(),
+                    })
+                    .await;
+                return;
+            }
+            let cancel = CancellationToken::new();
+            shared
+                .cancels
+                .lock()
+                .expect("cancel map")
+                .insert(id, cancel.clone());
+            tokio::spawn(run_references(shared, id, folder, options, cancel, events));
+        }
+        #[cfg(feature = "grobid")]
+        RagCommand::StopReferences { id } => {
+            if let Some(cancel) = shared.cancels.lock().expect("cancel map").remove(&id) {
+                cancel.cancel();
+            }
+        }
+        #[cfg(feature = "grobid")]
+        RagCommand::RefreshReferences { folder } => {
+            let bibliography = bibliography_path(&shared);
+            match references::load_entries(&bibliography, &folder) {
+                Ok(entries) => {
+                    let _ = events
+                        .send(RagEvent::ReferencesLoaded {
+                            entries,
+                            bibliography,
+                        })
+                        .await;
+                }
+                Err(message) => {
+                    let _ = events.send(RagEvent::Notice(message)).await;
+                }
             }
         }
         RagCommand::Apply { setup } => {
@@ -733,6 +789,75 @@ async fn run_sync(
 
 fn finish_sync(shared: &Arc<Shared>, id: RequestId) {
     shared.syncing.store(false, Ordering::Release);
+    shared.cancels.lock().expect("cancel map").remove(&id);
+}
+
+#[cfg(feature = "grobid")]
+fn bibliography_path(shared: &Shared) -> PathBuf {
+    shared
+        .setup
+        .lock()
+        .expect("setup")
+        .config
+        .workspace
+        .join(".ragrig/references.bib")
+}
+
+#[cfg(feature = "grobid")]
+async fn run_references(
+    shared: Arc<Shared>,
+    id: RequestId,
+    folder: PathBuf,
+    options: ReferenceOptions,
+    cancel: CancellationToken,
+    events: Sender<RagEvent>,
+) {
+    let bibliography = bibliography_path(&shared);
+    let _ = events
+        .send(RagEvent::ReferencesStarted {
+            id,
+            folder: folder.clone(),
+        })
+        .await;
+
+    let progress_events = events.clone();
+    let mut report_progress = move |progress: ReferenceProgress| {
+        let _ = progress_events.try_send(RagEvent::ReferencesProgress { id, progress });
+    };
+    let is_cancelled = || cancel.is_cancelled();
+    let mut observer = ExtractionObserver {
+        progress: Some(&mut report_progress),
+        cancel: Some(&is_cancelled),
+    };
+
+    match references::extract(&folder, &bibliography, &options, &mut observer).await {
+        Ok((entries, report)) => {
+            let _ = events
+                .send(RagEvent::ReferencesLoaded {
+                    entries,
+                    bibliography,
+                })
+                .await;
+            let _ = events
+                .send(RagEvent::ReferencesFinished { id, report })
+                .await;
+        }
+        Err(ExtractionError::Cancelled) => {
+            let _ = events.send(RagEvent::ReferencesStopped { id }).await;
+        }
+        Err(ExtractionError::Failed(message)) => {
+            let _ = events
+                .send(RagEvent::ReferencesFailed { id, message })
+                .await;
+        }
+    }
+
+    finish_references(&shared, id);
+}
+
+#[cfg(feature = "grobid")]
+fn finish_references(shared: &Arc<Shared>, id: RequestId) {
+    shared.referencing.store(false, Ordering::Release);
     shared.cancels.lock().expect("cancel map").remove(&id);
 }
 

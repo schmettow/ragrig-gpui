@@ -19,6 +19,8 @@ pub enum ComponentKind {
     Retriever,
     /// A vision or OCR component.
     Vision,
+    /// Bibliographic reference extraction.
+    References,
     /// Anything else.
     Other,
 }
@@ -34,6 +36,7 @@ impl ComponentKind {
             Self::Chunker => "Chunker",
             Self::Retriever => "Retriever",
             Self::Vision => "Vision",
+            Self::References => "References",
             Self::Other => "Component",
         }
     }
@@ -48,6 +51,7 @@ impl ComponentKind {
             Self::Chunker => IconName::Scissors,
             Self::Retriever => IconName::Search,
             Self::Vision => IconName::Eye,
+            Self::References => IconName::BookOpen,
             Self::Other => IconName::Settings,
         }
     }
@@ -132,6 +136,8 @@ mod tests {
     fn kinds_have_labels_and_icons() {
         assert_eq!(ComponentKind::Chat.label(), "Chat model");
         assert_eq!(ComponentKind::Store.icon(), IconName::Database);
+        assert_eq!(ComponentKind::References.label(), "References");
+        assert_eq!(ComponentKind::References.icon(), IconName::BookOpen);
     }
 
     #[test]

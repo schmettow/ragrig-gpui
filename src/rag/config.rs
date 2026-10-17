@@ -196,6 +196,12 @@ pub struct RagSettings {
     pub memory: MemoryChoice,
     /// Small model used for rewriting and summaries.
     pub memory_model: String,
+    /// Base URL of the GROBID server.
+    pub grobid_url: String,
+    /// Rename PDFs to their metadata name during reference extraction.
+    pub rename_pdfs: bool,
+    /// Complete extracted references against OpenAlex.
+    pub openalex: bool,
     /// Named folder corpora in `name=path` form.
     pub corpus_dirs: Vec<String>,
     /// Profile name typed by the user.
@@ -269,6 +275,9 @@ impl RagSettings {
             sloppy_pdf: config.parse.sloppy_pdf,
             memory,
             memory_model: config.memory.model.clone(),
+            grobid_url: "http://localhost:8070".to_owned(),
+            rename_pdfs: false,
+            openalex: false,
             corpus_dirs: config.corpus_dirs.clone(),
             profile_name: String::new(),
             profiles: Vec::new(),
@@ -414,6 +423,9 @@ impl RagSettings {
         }
         if self.memory.uses_model() && self.memory_model.trim().is_empty() {
             return Err("choose a memory model or turn memory off".to_owned());
+        }
+        if self.grobid_url.trim().is_empty() {
+            return Err("enter the GROBID server URL".to_owned());
         }
         for entry in &self.corpus_dirs {
             let entry = entry.trim();

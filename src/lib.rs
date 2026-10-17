@@ -18,7 +18,8 @@
 //!   and the composite [`RagChat`] surface. The worker uses a dedicated Tokio
 //!   runtime thread.
 //! - `grobid`: enables GROBID/BibTeX reference ingestion through
-//!   [`grobid-bibtex`](https://crates.io/crates/grobid-bibtex).
+//!   [`grobid-bibtex`](https://crates.io/crates/grobid-bibtex), the reference
+//!   rows, and their hover copy actions. It implies `ragrig`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -32,6 +33,8 @@ mod markdown;
 mod model;
 #[cfg(feature = "ragrig")]
 mod rag;
+#[cfg(feature = "grobid")]
+mod references;
 mod session_picker;
 mod settings;
 mod side_panel;
@@ -47,6 +50,11 @@ pub use markdown::stabilize_markdown;
 pub use model::*;
 #[cfg(feature = "ragrig")]
 pub use rag::*;
+#[cfg(feature = "grobid")]
+pub use references::{
+    ReferenceCopy, ReferenceEntry, ReferenceOptions, ReferenceProgress, ReferenceReport,
+    ReferenceRow, ReferenceStage,
+};
 pub use session_picker::{SessionPicker, SessionPickerEvent};
 pub use settings::{chat_settings, chat_settings_page};
 pub use side_panel::SidePanel;

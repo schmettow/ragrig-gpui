@@ -12,14 +12,15 @@ categories = ["gui"]
 [features]
 default = ["ragrig"]
 ragrig = ["dep:ragrig", "dep:tokio"]
-grobid = ["dep:grobid-bibtex"]
+grobid = ["dep:grobid-bibtex", "dep:biblatex", "ragrig"]
 
 [dependencies]
 async-channel = "2"
 gpui-kit = "0.7.3"
 ragrig = { version = "1.1", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"], optional = true }
-grobid-bibtex = { version = "0.2.1", features = ["openalex"], optional = true }
+biblatex = { version = "0.12", optional = true }
+grobid-bibtex = { version = "0.3", features = ["pipeline"], optional = true }
 
 [dev-dependencies]
 anyhow = "1"

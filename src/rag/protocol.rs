@@ -11,6 +11,8 @@ use std::{
 };
 
 use crate::model::{ChatRole, SourceRef};
+#[cfg(feature = "grobid")]
+use crate::references::{ReferenceEntry, ReferenceOptions, ReferenceProgress, ReferenceReport};
 
 use super::RagSetup;
 
@@ -116,6 +118,29 @@ pub enum RagCommand {
     StopSync {
         /// The ingestion to stop.
         id: RequestId,
+    },
+    /// Parse a folder's PDFs with GROBID and merge the records into the
+    /// workspace bibliography.
+    #[cfg(feature = "grobid")]
+    ExtractReferences {
+        /// Correlates the reference events.
+        id: RequestId,
+        /// Folder scanned recursively for PDFs.
+        folder: PathBuf,
+        /// GROBID URL and pipeline switches.
+        options: ReferenceOptions,
+    },
+    /// Stop a running reference extraction.
+    #[cfg(feature = "grobid")]
+    StopReferences {
+        /// The extraction to stop.
+        id: RequestId,
+    },
+    /// Reload the workspace bibliography without contacting GROBID.
+    #[cfg(feature = "grobid")]
+    RefreshReferences {
+        /// Folder used to resolve the rows' PDF paths.
+        folder: PathBuf,
     },
     /// Rebuild the agent with new configuration.
     Apply {
@@ -386,6 +411,52 @@ pub enum RagEvent {
     },
     /// Ingestion failed.
     SyncFailed {
+        /// Request identity.
+        id: RequestId,
+        /// Error chain.
+        message: String,
+    },
+    /// Reference extraction started.
+    #[cfg(feature = "grobid")]
+    ReferencesStarted {
+        /// Request identity.
+        id: RequestId,
+        /// Folder being scanned.
+        folder: PathBuf,
+    },
+    /// Reference extraction progress.
+    #[cfg(feature = "grobid")]
+    ReferencesProgress {
+        /// Request identity.
+        id: RequestId,
+        /// Current snapshot.
+        progress: ReferenceProgress,
+    },
+    /// The merged bibliography was loaded into UI rows.
+    #[cfg(feature = "grobid")]
+    ReferencesLoaded {
+        /// Rows, sorted by author, year, and title.
+        entries: Vec<ReferenceEntry>,
+        /// The `.bib` file backing the rows.
+        bibliography: PathBuf,
+    },
+    /// Reference extraction finished.
+    #[cfg(feature = "grobid")]
+    ReferencesFinished {
+        /// Request identity.
+        id: RequestId,
+        /// What the run did.
+        report: ReferenceReport,
+    },
+    /// Reference extraction was cancelled.
+    #[cfg(feature = "grobid")]
+    ReferencesStopped {
+        /// Request identity.
+        id: RequestId,
+    },
+    /// Reference extraction failed.
+    #[cfg(feature = "grobid")]
+    ReferencesFailed {
         /// Request identity.
         id: RequestId,
         /// Error chain.

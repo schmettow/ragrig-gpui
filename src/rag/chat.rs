@@ -367,6 +367,24 @@ impl RagChat {
             RagEvent::Notice(message) => {
                 cx.emit(RagChatEvent::Status(message.into()));
             }
+            #[cfg(feature = "grobid")]
+            RagEvent::ReferencesStarted { .. } | RagEvent::ReferencesLoaded { .. } => {}
+            #[cfg(feature = "grobid")]
+            RagEvent::ReferencesProgress { progress, .. } => {
+                cx.emit(RagChatEvent::Status(progress.summary().into()));
+            }
+            #[cfg(feature = "grobid")]
+            RagEvent::ReferencesFinished { report, .. } => {
+                cx.emit(RagChatEvent::Status(report.summary().into()));
+            }
+            #[cfg(feature = "grobid")]
+            RagEvent::ReferencesStopped { .. } => {
+                cx.emit(RagChatEvent::Status("Reference extraction stopped".into()));
+            }
+            #[cfg(feature = "grobid")]
+            RagEvent::ReferencesFailed { message, .. } => {
+                cx.emit(RagChatEvent::Status(message.into()));
+            }
             RagEvent::Sessions(_)
             | RagEvent::Library(_)
             | RagEvent::SyncStarted { .. }

@@ -3451,12 +3451,13 @@ dependencies = [
 
 [[package]]
 name = "grobid-bibtex"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98916dcc8a167454fd76fca042e6e3b0dc03ad2eb44ae0d448a13ea9c7dfbeec"
+checksum = "6f9030058e85b6c1a0cf008906ae22945c6d5a30b5ab20154acada760e135b45"
 dependencies = [
  "biblatex",
  "grobid",
+ "log",
  "reqwest",
  "serde",
  "serde_json",
@@ -6067,6 +6068,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "async-trait",
+ "biblatex",
  "gpui-kit",
  "grobid-bibtex",
  "ragrig",

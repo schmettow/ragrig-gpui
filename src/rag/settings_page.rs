@@ -196,6 +196,25 @@ pub fn rag_settings_page(
         |settings, value| settings.memory_model = value,
     );
 
+    #[cfg(feature = "grobid")]
+    let grobid_url = input_field(
+        &settings,
+        |settings| settings.grobid_url.clone(),
+        |settings, value| settings.grobid_url = value,
+    );
+    #[cfg(feature = "grobid")]
+    let rename_pdfs = switch_field(
+        &settings,
+        |settings| settings.rename_pdfs,
+        |settings, value| settings.rename_pdfs = value,
+    );
+    #[cfg(feature = "grobid")]
+    let openalex = switch_field(
+        &settings,
+        |settings| settings.openalex,
+        |settings, value| settings.openalex = value,
+    );
+
     let profile_name = input_field(
         &settings,
         |settings| settings.profile_name.clone(),
@@ -219,15 +238,17 @@ pub fn rag_settings_page(
         move |_, _, cx| apply_row(settings.clone(), controller.clone(), cx)
     });
 
-    SettingPage::new("RAG")
-        .description("Ragrig workspace, models, retrieval, and memory. Press Apply to rebuild the agent.")
+    let mut page = SettingPage::new("RAG")
+        .description(
+            "Ragrig workspace, models, retrieval, and memory. Press Apply to rebuild the agent.",
+        )
         .default_open(true)
         .group(
-            SettingGroup::new().title("Workspace").item(
-                SettingItem::new("Workspace", workspace).description(
+            SettingGroup::new()
+                .title("Workspace")
+                .item(SettingItem::new("Workspace", workspace).description(
                     "Store, sessions, and profiles live under this folder (.ragrig).",
-                ),
-            ),
+                )),
         )
         .group(
             SettingGroup::new()
@@ -295,7 +316,35 @@ pub fn rag_settings_page(
                     SettingItem::new("Memory model", memory_model)
                         .description("Small local model used for rewriting and summaries."),
                 ),
-        )
+        );
+
+    #[cfg(feature = "grobid")]
+    {
+        page = page.group(
+            SettingGroup::new()
+                .title("References")
+                .item(
+                    SettingItem::new("GROBID server", grobid_url)
+                        .description("Used when parsing a folder's PDFs into the bibliography."),
+                )
+                .item(
+                    SettingItem::new("Rename PDFs", rename_pdfs)
+                        .description("Rename processed PDFs to Key - Authors - Title - Year."),
+                )
+                .item(
+                    SettingItem::new("OpenAlex completion", openalex)
+                        .description("Fill missing DOI and venue data from OpenAlex."),
+                )
+                .footer(|_, cx| {
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Records merge into .ragrig/references.bib in the workspace.")
+                }),
+        );
+    }
+
+    page = page
         .group(
             SettingGroup::new()
                 .title("Profiles")
@@ -309,7 +358,9 @@ pub fn rag_settings_page(
                         .child("Profiles are JSON files in .ragrig/profiles; secrets are never written.")
                 }),
         )
-        .group(SettingGroup::new().title("Apply").item(apply))
+        .group(SettingGroup::new().title("Apply").item(apply));
+
+    page
 }
 
 /// Build a complete [`Settings`] element for Ragrig configuration.

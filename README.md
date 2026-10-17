@@ -6,8 +6,9 @@ status, a full settings page, and a dedicated Tokio controller. The crate has
 no editor; Sciscraper and other hosts compose these pieces into their own
 layout.
 
-Status: **M2 complete (0.2.0)** — controller, RAG chat demo, sessions, library
-ingestion, and settings. The public API may still change before 1.0. See
+Status: **M2 (RAG chat) and M4 (GROBID references) complete** — controller,
+RAG chat demo, sessions, library ingestion, settings, and reference rows with
+hover copy actions. The public API may still change before 1.0. See
 [`PLAN.md`](PLAN.md) for milestones, decisions, and measured results.
 
 ## Quick start
@@ -37,11 +38,24 @@ RAGRIG_MODEL=llama3.2:3b \
 cargo run --example ragchat
 ```
 
+Add the GROBID feature and parse the folder's references too:
+
+```sh
+RAGRIG_WORKSPACE=/home/mart/Packages/ragrig-gpui/test_library \
+RAGRIG_GROBID=1 \
+cargo run --example ragchat --features grobid
+```
+
+This writes `.ragrig/references.bib` in the workspace and a GROBID manifest in
+the corpus folder. Renaming is off by default; enable it under **Settings →
+References** if you want the PDFs renamed to `Key - Authors - Title - Year`.
+
 `RAGRIG_WORKSPACE` defaults to the current directory. `RAGRIG_CORPUS` indexes
 a folder on startup; `RAGRIG_MODEL` and `RAGRIG_EMBED_MODEL` override the
 settings defaults; `RAGRIG_ASK` submits a first question after the window
 opens (use it with an already indexed workspace, because indexing and asking
-are serialised).
+are serialised); `RAGRIG_GROBID=1` parses references on startup when the
+`grobid` feature is enabled.
 
 Or select the manifest explicitly from anywhere:
 
@@ -57,6 +71,11 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
 
 - **Library** (left dock): enter a folder, press **Index**, watch documents and
   chunks appear. Indexing is incremental and can be stopped.
+- **References** (Library, with `--features grobid`): press **GROBID** to parse
+  the folder's PDFs. Rows show `@key`, authors, year, and title. Hover a row
+  for **Copy @key** and **Copy path**; a row without a PDF explains why the
+  path button is disabled. The last-run report shows parsed, cached, merged,
+  and duplicate counts.
 - Click the paperclip on a document row to attach it to the next question.
 - **Chat** (center): ask a question. Tokens stream, the footer reports chunks,
   sources, tokens, and elapsed time. **Stop** keeps the partial answer; retry a
@@ -86,7 +105,7 @@ cargo run --example spike --no-default-features
 | Feature | Default | Purpose |
 |---|---|---|
 | `ragrig` | yes | `RagController`, `RagChat`, `RagSettings`, Tokio worker |
-| `grobid` | no | GROBID/BibTeX reference ingestion via `grobid-bibtex` |
+| `grobid` | no | GROBID/BibTeX extraction, reference rows, hover copy actions |
 
 arXiv and Semantic Scholar discovery are deprecated and will not be ported.
 
@@ -104,6 +123,7 @@ ragrig-gpui
   worker thread ── multi-thread Tokio runtime
         │
   AgentSession ── RagAgent, vector store, session store
+  grobid-bibtex pre-pass ── manifest, extract, rename, merge
 ```
 
 - `RagController::new(RagSetup, cx)` starts one worker thread per controller.
@@ -124,9 +144,19 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 44 library tests (including six actor tests with a fake
-generator and embedder), 2 gallery tests, 5 active spike tests plus one
-ignored typing benchmark, and 2 doctests.
+Current suite: 50 active library tests (including six actor tests with a fake
+generator and embedder, and a GPUI hover/clipboard test), 2 gallery tests, 5
+active spike tests plus one ignored typing benchmark, and 2 doctests. One
+GROBID end-to-end test is ignored by default:
+
+```sh
+cargo test --all-features grobid_extracts_the_test_library_end_to_end \
+  -- --ignored --nocapture
+```
+
+It copies the PDFs from `test_library/` to a temporary corpus, parses them
+with the running GROBID server, renames them, merges the bibliography, and
+checks every row's PDF path. It needs `http://localhost:8070`.
 
 On a machine without the xkbcommon development packages, linking fails even
 though the Rust crates compile. Install the packages above; do not paper over
@@ -151,6 +181,12 @@ the link error in CI.
   agent.
 - Secrets come from the environment (`DEEPSEEK_API_KEY`) and are never
   persisted. Profiles contain `"deepseek_api_key": null`.
+- GROBID extraction runs on the same worker as chat. It uses
+  `grobid-bibtex`'s pre-pass, so unchanged PDFs are cached by a
+  `.ragrig_grobid.json` manifest. References merge into
+  `<workspace>/.ragrig/references.bib`; the demo resolves rows' PDFs against
+  the selected corpus. Rename and OpenAlex completion are opt-in because both
+  change files or call the network.
 - The checked-in `Cargo.lock` is intentional: `gpui-kit 0.7.3`'s optional
   `gpui-fast` branch pins `cocoa =0.26.0`, while a pre-existing lockfile may
   hold `0.26.1`. A fresh resolve succeeds; a stale one fails.

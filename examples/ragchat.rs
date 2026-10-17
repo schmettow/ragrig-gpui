@@ -128,11 +128,25 @@ impl RagAppState {
                 RagEvent::SyncProgress { progress, .. } => this.set_status(progress.summary(), cx),
                 RagEvent::SyncFinished { summary, .. } => this.set_status(
                     format!(
-                        "Indexed {} documents and {} chunks from {}",
+                        "Indexed {} and {} from {}",
                         summary.documents, summary.chunks, summary.corpus
                     ),
                     cx,
                 ),
+                #[cfg(feature = "grobid")]
+                RagEvent::ReferencesProgress { progress, .. } => {
+                    this.set_status(progress.summary(), cx)
+                }
+                #[cfg(feature = "grobid")]
+                RagEvent::ReferencesFinished { report, .. } => {
+                    this.set_status(report.summary(), cx)
+                }
+                #[cfg(feature = "grobid")]
+                RagEvent::ReferencesFailed { message, .. } => this.set_status(message.clone(), cx),
+                #[cfg(feature = "grobid")]
+                RagEvent::ReferencesLoaded { entries, .. } => {
+                    this.set_status(format!("{} references", entries.len()), cx)
+                }
                 _ => {}
             },
         )
@@ -141,6 +155,14 @@ impl RagAppState {
         if let Some(folder) = std::env::var_os("RAGRIG_CORPUS") {
             let folder = PathBuf::from(folder);
             state.index_folder(folder, cx);
+        }
+
+        #[cfg(feature = "grobid")]
+        {
+            state.refresh_references(cx);
+            if std::env::var_os("RAGRIG_GROBID").is_some() {
+                state.extract_references(cx);
+            }
         }
 
         if let Ok(prompt) = std::env::var("RAGRIG_ASK")
@@ -190,6 +212,51 @@ impl RagAppState {
             return;
         }
         self.index_folder(PathBuf::from(text), cx);
+    }
+
+    #[cfg(feature = "grobid")]
+    fn reference_folder(&self, cx: &App) -> PathBuf {
+        let input = self.corpus_path.read(cx).value().trim().to_owned();
+        if !input.is_empty() {
+            let path = PathBuf::from(input);
+            if path.is_dir() {
+                return path;
+            }
+        }
+        for corpus in &self.settings.read(cx).corpus_dirs {
+            if let Some((_, path)) = corpus.split_once('=') {
+                let path = PathBuf::from(path.trim());
+                if path.is_dir() {
+                    return path;
+                }
+            }
+        }
+        let workspace = PathBuf::from(self.settings.read(cx).workspace.trim());
+        if workspace.is_dir() {
+            workspace
+        } else {
+            PathBuf::from(".")
+        }
+    }
+
+    #[cfg(feature = "grobid")]
+    fn extract_references(&mut self, cx: &mut Context<Self>) {
+        let folder = self.reference_folder(cx);
+        let options = self.settings.read(cx).reference_options();
+        match self.controller.update(cx, |controller, cx| {
+            controller.extract_references(folder, options, cx)
+        }) {
+            Ok(_) => self.set_status("Parsing references with GROBID…", cx),
+            Err(message) => self.set_status(message, cx),
+        }
+    }
+
+    #[cfg(feature = "grobid")]
+    fn refresh_references(&mut self, cx: &mut Context<Self>) {
+        let folder = self.reference_folder(cx);
+        self.controller.update(cx, |controller, cx| {
+            controller.refresh_references(folder, cx)
+        });
     }
 }
 
@@ -523,14 +590,14 @@ impl Render for LibraryPanel {
             );
         }
 
-        body = body.child(
+        let mut documents_body = v_flex().gap_2().child(
             div()
                 .mt_2()
                 .text_sm()
                 .child(format!("Documents · {chunks} chunks")),
         );
         if documents.is_empty() {
-            body = body.child(muted(
+            documents_body = documents_body.child(muted(
                 "The store is empty. Chat still works without retrieval.",
                 cx,
             ));
@@ -562,7 +629,7 @@ impl Render for LibraryPanel {
                     "{} · {} · {}",
                     document.corpus, document.parser, document.chunker
                 );
-                body = body.child(
+                documents_body = documents_body.child(
                     h_flex()
                         .gap_2()
                         .items_center()
@@ -578,10 +645,13 @@ impl Render for LibraryPanel {
                         .child(
                             v_flex()
                                 .flex_1()
+                                .min_w_0()
                                 .gap_1()
-                                .child(div().text_sm().child(document.name))
+                                .child(div().min_w_0().truncate().text_sm().child(document.name))
                                 .child(
                                     div()
+                                        .min_w_0()
+                                        .truncate()
                                         .text_xs()
                                         .text_color(cx.theme().muted_foreground)
                                         .child(detail),
@@ -591,6 +661,106 @@ impl Render for LibraryPanel {
                 );
             }
         }
+
+        #[cfg(feature = "grobid")]
+        {
+            let controller = self.state.read(cx).controller.clone();
+            let (references, bibliography, report, reference_progress, extracting) = {
+                let controller = controller.read(cx);
+                (
+                    controller.references().to_vec(),
+                    controller
+                        .reference_bibliography()
+                        .map(|path| path.to_path_buf()),
+                    controller.reference_report().cloned(),
+                    controller.reference_progress().cloned(),
+                    controller.is_extracting_references(),
+                )
+            };
+
+            let parse_state = self.state.clone();
+            let parse = Button::new("ragchat-grobid-parse")
+                .label("GROBID")
+                .icon(IconName::BookOpen)
+                .small()
+                .outline()
+                .disabled(extracting)
+                .tooltip("Parse the folder's PDFs and merge references")
+                .on_click(move |_, _, cx| {
+                    parse_state.update(cx, |state, cx| state.extract_references(cx));
+                });
+            let refresh_references = {
+                let controller = controller.clone();
+                let folder = self.state.read(cx).reference_folder(cx);
+                Button::new("ragchat-references-refresh")
+                    .icon(IconName::RefreshCw)
+                    .small()
+                    .ghost()
+                    .tooltip("Reload the bibliography")
+                    .on_click(move |_, _, cx| {
+                        controller.update(cx, |controller, cx| {
+                            controller.refresh_references(folder.clone(), cx)
+                        });
+                    })
+            };
+
+            body = body.child(
+                h_flex()
+                    .mt_2()
+                    .justify_between()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .child(format!("References · {}", references.len())),
+                    )
+                    .child(h_flex().gap_1().child(parse).child(refresh_references)),
+            );
+
+            if let Some(progress) = reference_progress {
+                body = body.child(
+                    v_flex()
+                        .gap_1()
+                        .p_2()
+                        .rounded(cx.theme().radius)
+                        .bg(cx.theme().muted.opacity(0.35))
+                        .child(div().text_sm().child(progress.summary())),
+                );
+            }
+            if let Some(report) = report {
+                body = body.child(muted(format!("Last run: {}", report.summary()), cx));
+                for failure in report.failed {
+                    body = body.child(muted(failure, cx));
+                }
+            }
+            if let Some(path) = bibliography {
+                body = body.child(muted(format!("Bibliography: {}", path.display()), cx));
+            }
+            if references.is_empty() {
+                body = body.child(muted(
+                    "No references yet. Press GROBID to parse this folder's PDFs.",
+                    cx,
+                ));
+            } else {
+                for (index, entry) in references.into_iter().enumerate() {
+                    let state = self.state.clone();
+                    body =
+                        body.child(ReferenceRow::new(index, entry).on_copy(move |copy, _, cx| {
+                            state.update(cx, |state, cx| match copy {
+                                ReferenceCopy::Key(key) => {
+                                    state.set_status(format!("Copied @{key}"), cx)
+                                }
+                                ReferenceCopy::Path(path) => {
+                                    state.set_status(format!("Copied {}", path.display()), cx)
+                                }
+                            });
+                        }));
+                }
+            }
+        }
+
+        body = body.child(documents_body);
 
         SidePanel::new("ragchat-library", "Library")
             .subtitle("Corpora and documents")

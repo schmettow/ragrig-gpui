@@ -19,3 +19,9 @@ pub use crate::rag::{
     RagCommand, RagController, RagEvent, RagReply, RagSettings, RagSetup, RequestId, SessionInfo,
     SessionTurn, SyncSummary, rag_settings, rag_settings_page,
 };
+
+#[cfg(feature = "grobid")]
+pub use crate::references::{
+    ReferenceCopy, ReferenceEntry, ReferenceOptions, ReferenceProgress, ReferenceReport,
+    ReferenceRow, ReferenceStage,
+};

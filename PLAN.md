@@ -77,6 +77,7 @@ ragrig-gpui (library)
   session_picker.rs, agent_bar.rs, side_panel.rs
   settings.rs     ChatSettings + SettingPage helper
   rag/            protocol, Tokio worker, RagController, RagChat, RagSettings
+  references.rs   GROBID pre-pass + reference rows and hover copy actions
         │
 gpui-kit 0.7.3 (gpui-pre + gpui-base + gpui-component + assets)
 ```
@@ -373,16 +374,54 @@ Release: **0.2.0**.
 - Acceptance: two corpora, incremental update, remove one corpus, attach
   a document, restart and recover state.
 
-### M4 — GROBID and bibliography (3–6 days)
+### M4 — GROBID and bibliography (done, 2026-10-17)
 
-- Feature `grobid`: depend on `grobid-bibtex` 0.2.1 (`openalex` feature);
-  use its `Collection::cite_entries` path rather than duplicating parsing.
-- Pre-pass/rename, BibTeX merge status, `@key` lookup and inline-token
-  citation attach, `/refs` extraction.
-- arXiv and Semantic Scholar discovery are deprecated: do **not** port
-  `ragrig-cli/src/search.rs` and do not add a `discovery` feature.
-- Acceptance: with a running GROBID server, rename and merge entries and let
-  `@key` attach the parsed paper to the prompt.
+Delivered before M3 at the user's request. The version stays at 0.2.0;
+0.3.0 remains the next planned bump after M3.
+
+- `grobid` feature (implies `ragrig`): depends on `grobid-bibtex` 0.3 with
+  its `pipeline` feature (which includes OpenAlex completion). `biblatex` is
+  a direct dependency only to read entry fields.
+- `src/references.rs`: the full GROBID pre-pass (fingerprint manifest, extract,
+  optional OpenAlex completion, optional rename, merge) adapted to UI rows,
+  plus progress/report types, PDF path resolution, and the hover row.
+- Reference worker commands/events in the existing controller: extract,
+  stop, refresh, progress, loaded rows, report. The bibliography lives at
+  `<workspace>/.ragrig/references.bib` and every entry links its PDF.
+- `ReferenceRow`: two-line reference row with **Copy @key** (writes `@key`)
+  and **Copy path** (writes the resolved absolute PDF path). Both controls
+  are laid out while hidden so the row does not jump; a missing PDF keeps the
+  path button disabled with an explanatory tooltip.
+- Demo Library panel: a References section above Documents with count, GROBID
+  parse button, refresh, progress, last-run report, bibliography path, and
+  the rows. `RAGRIG_GROBID=1` parses the corpus/workspace on startup.
+- Settings: GROBID URL, rename switch (off by default), OpenAlex switch (off
+  by default). Applying chat settings never turns these on implicitly.
+- 50 active library tests plus one ignored GROBID end-to-end test; the hover
+  test drives a real GPUI frame and asserts both clipboard contents.
+
+Acceptance: against the running GROBID server, the three PDFs in
+`test_library/` produced three entries with keys `Kano2025`, `Kobayashi2011`,
+and `Kozmik2005`, merged with `file` links. A second run reported three cached
+records and three duplicates. The ignored test also runs a rename pass on a
+copy of the corpus and verifies that every merged row resolves to its renamed
+PDF.
+
+Findings:
+
+- `grobid-bibtex` 0.3's pre-pass already owns fingerprinting, caching,
+  completion, renaming and duplicate detection; reimplementing any of it in
+  the UI would have duplicated upstream work.
+- `PrepassObserver` is synchronous and does not require `Send`, so the
+  observer's closures need explicit `Send`/`Sync` bounds for the extraction
+  future to run on a Tokio worker.
+- `Collection::iter()` yields `biblatex::Entry`; reading fields needs the
+  `ChunksExt` trait, hence the direct (optional) `biblatex` dependency.
+- GROBID links absolute paths in this setup; relative paths are resolved
+  against the scanned corpus, with a keyed-filename fallback.
+- Not ported: inline `@key` resolution/attachment to the prompt. M4 ships the
+  copy actions; pasting the copied key into a question is the current path.
+  The deprecated arXiv/Semantic Scholar discovery remains out.
 
 ### M5 — Hardening and publication (3–5 days)
 
