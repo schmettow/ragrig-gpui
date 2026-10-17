@@ -421,6 +421,15 @@ impl ChatState {
         self.messages.clear();
     }
 
+    /// Remove one message, keeping the relative order of the rest.
+    ///
+    /// Returns whether the message existed.
+    pub fn remove(&mut self, id: MessageId) -> bool {
+        let before = self.messages.len();
+        self.messages.retain(|message| message.id != id);
+        self.messages.len() != before
+    }
+
     /// Replace the transcript, assigning fresh identities.
     pub fn replace(&mut self, messages: impl IntoIterator<Item = NewMessage>) -> Vec<MessageId> {
         self.messages.clear();
@@ -517,6 +526,25 @@ mod tests {
         let meta = message.meta().expect("meta");
         assert_eq!(meta.sources.len(), 1);
         assert_eq!(meta.summary(), "deepseek-chat · 12 chunks · 1 source");
+    }
+
+    #[test]
+    fn removing_a_message_keeps_the_rest_in_order() {
+        let mut state = ChatState::default();
+        let first = state.push_user("first");
+        let second = state.push_user("second");
+        let third = state.push_user("third");
+
+        assert!(state.remove(second));
+        assert!(!state.remove(second));
+        assert_eq!(
+            state
+                .messages()
+                .iter()
+                .map(ChatMessage::id)
+                .collect::<Vec<_>>(),
+            vec![first, third]
+        );
     }
 
     #[test]

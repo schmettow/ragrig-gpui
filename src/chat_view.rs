@@ -74,6 +74,10 @@ impl MessageTexts {
         self.states.insert(id, state);
     }
 
+    fn remove(&mut self, id: MessageId) {
+        self.states.remove(&id);
+    }
+
     fn clear(&mut self) {
         self.states.clear();
     }
@@ -244,6 +248,21 @@ impl ChatView {
         self.scroller
             .update(cx, |scroller, cx| scroller.reset(0, cx));
         cx.notify();
+    }
+
+    /// Remove one message, e.g. before retrying a failed answer.
+    ///
+    /// Returns whether the message existed.
+    pub fn remove(&mut self, id: MessageId, cx: &mut Context<Self>) -> bool {
+        if !self.state.update(cx, |state, _| state.remove(id)) {
+            return false;
+        }
+        self.texts.update(cx, |texts, _| texts.remove(id));
+        let len = self.state.read(cx).len();
+        self.scroller
+            .update(cx, |scroller, cx| scroller.reset(len, cx));
+        cx.notify();
+        true
     }
 
     /// Replace the transcript, for loading a session.

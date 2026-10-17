@@ -1,6 +1,6 @@
 [package]
 name = "ragrig-gpui"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -22,8 +22,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"], optiona
 grobid-bibtex = { version = "0.2.1", features = ["openalex"], optional = true }
 
 [dev-dependencies]
+anyhow = "1"
+async-trait = "0.1"
 gpui-kit = { version = "0.7.3", features = ["test-support"] }
-tokio = { version = "1", features = ["rt", "time"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
 
 [[example]]
 name = "spike"
@@ -32,3 +34,6 @@ test = true
 [[example]]
 name = "gallery"
 test = true
+
+[[example]]
+name = "ragchat"

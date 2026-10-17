@@ -66,8 +66,8 @@ the optional `speech` feature.
 ### 3.1 Layers
 
 ```text
-examples/gallery.rs (M1 widget gallery, ships in the crate)
-  dock layout, seeded transcript, mock stream, settings, attachments
+examples/gallery.rs (M1 widget gallery, no controller)
+examples/ragchat.rs (M2 full demo: controller, library, sessions, settings)
         │
 ragrig-gpui (library)
   model/          ChatState, messages, attachments, components, sessions, settings
@@ -76,6 +76,7 @@ ragrig-gpui (library)
   attachments.rs  attachment chips
   session_picker.rs, agent_bar.rs, side_panel.rs
   settings.rs     ChatSettings + SettingPage helper
+  rag/            protocol, Tokio worker, RagController, RagChat, RagSettings
         │
 gpui-kit 0.7.3 (gpui-pre + gpui-base + gpui-component + assets)
 ```
@@ -309,22 +310,56 @@ Deviations and findings:
 - Dock panels are registered, but the gallery does not load or save layouts;
   M3 adds `.ragrig/gpui.json` persistence.
 
-### M2 — Controller and RAG chat demo (5–8 days)
+### M2 — Controller and RAG chat demo (done, 2026-10-17)
 
-- Feature `ragrig`: `RagCommand` / `RagEvent`, `RagController` entity,
-  dedicated Tokio actor, cancellation, streaming batches, error mapping.
-- Wire `ComposerEvent` to the controller; map `Stop` through `CancelFlag` into
-  the actor's `CancellationToken`; keep partial answers.
-- Build/replace the agent from `RagrigConfig`; sessions
-  (`FsSessionStore`), attachments (`DocumentParsers`), empty-library
-  pure-chat mode (do not copy the CLI's `NoDocumentsFound` startup error).
-- Demo: onboarding (workspace, Ollama/DeepSeek, model health, first
-  corpus), session picker, transcript, attachments, composer, agent bar.
-- Settings: chat, memory, embedding, parsing, chunking, retrieval,
-  profiles; explicit Apply; validation; test-connection.
-- Acceptance: with Ollama, index a folder with PDFs, stream answers,
-  cancel, load old sessions, change chat settings; empty library still
-  chats; no UI freezes. Release 0.2.0.
+Delivered:
+
+- `src/rag/`: `RagCommand`/`RagEvent` protocol, dedicated multi-thread Tokio
+  worker, `RagController` entity, full `RagSettings` page, and the composite
+  `RagChat` surface (transcript + attachments + composer).
+- Streaming tokens are batched on the worker (~30 Hz) and delivered through a
+  bounded `async_channel`; `Stop` cancels through Ragrig's
+  `CancellationToken` and keeps the partial answer. Non-streaming mode is a
+  setting.
+- Agent construction from `RagrigConfig` (chat, embedder, parser filter,
+  chunking, memory strategy, system prompt). DeepSeek keys are read from
+  `DEEPSEEK_API_KEY` only and never enter a profile.
+- Sessions: list, load, new, auto-save after every successful turn; Apply
+  rebuilds the agent and reloads the current session when it was saved.
+- Library: incremental folder ingestion with progress, cancel, document list,
+  path resolution, and one-shot file attachments on the next question.
+- Settings: workspace, provider, models, temperature/tokens, prompt, embeddings,
+  retrieval, PDF backend, chunking, memory, profiles (`name=path` corpora are
+  kept across applies).
+- `examples/ragchat.rs`: four dock panels (Chat, Library, Sessions, Settings,
+  Components), onboarding banner, agent bar, session picker, status line, and
+  `RAGRIG_WORKSPACE` / `RAGRIG_CORPUS` / `RAGRIG_MODEL` /
+  `RAGRIG_EMBED_MODEL` / `RAGRIG_ASK` environment hooks.
+- 44 library tests (including six actor tests with a fake generator and
+  embedder), 2 gallery tests, 5 active spike tests, 2 doctests; clippy clean.
+
+Acceptance: verified manually against Ollama with `llama3.2:3b` and
+`nomic-embed-text`: indexed a Markdown corpus (1 document, 7 chunks), streamed
+an answer with `7 chunks · 1 source · 5.1 s`, displayed the source chip, and
+reloaded the saved session from the picker. An empty workspace streamed a pure
+chat answer with `0 documents · 0 chunks`. The 3.3 MB PDF fixture parsed and
+indexed concurrently (4,757 chunks, progress visible, interruptible).
+
+Findings:
+
+- The initial worker path never sent `AgentReady` (only `Apply` did). The
+  controller therefore stayed on "Starting the RAG worker…". Unified the
+  announcement after any build.
+- `BruteForceStore` deep-copies on clone in some backends: ingesting through a
+  cloned `RagAgent` left the session's store empty. Ingestion now holds the
+  session lock and runs on the session's own agent; generation requests wait
+  for indexing to finish.
+- `ChatView::remove` was added so retry can drop the failed message before
+  resending its prompt without echoing the user turn.
+- Widget callbacks that mutate their own entity must be deferred
+  (`cx.defer`); the retry path does this to avoid a re-entrant update.
+
+Release: **0.2.0**.
 
 ### M3 — Library management (4–6 days)
 
@@ -466,9 +501,8 @@ crate: it changes the backend for the whole dependency graph.
 
 ## 11. Next implementation step
 
-M1: promote the spike's model and reducers into `src/model/` and
-`src/reducers/`, replace per-frame Markdown rebuilding with per-message
-`TextViewState`, add the `Composer`/`ChatView` entities and the
-`AttachmentRows`/`SessionPicker`/`AgentBar` builders, and add the headless
-widget gallery. The Tokio bridge stays as proven in M0; M2 swaps the fake
-worker for `RagController`.
+M3: deepen the library. Corpora list with enable/remove/sync/rebuild/purge,
+per-document chunk counts and actions, drag/drop paths, attach a library
+document (already wired in the M2 demo), pending/change detection, and dock
+layout persistence in `.ragrig/gpui.json`. Apply the same worker protocol;
+do not move Ragrig futures onto GPUI's executor.

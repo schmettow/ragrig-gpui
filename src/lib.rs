@@ -14,8 +14,9 @@
 //!
 //! # Feature flags
 //!
-//! - `ragrig` (default): enables the Ragrig controller and its Tokio bridge.
-//!   M1 does not use it yet; M2 wires it to these primitives.
+//! - `ragrig` (default): enables the Ragrig controller, full settings page,
+//!   and the composite [`RagChat`] surface. The worker uses a dedicated Tokio
+//!   runtime thread.
 //! - `grobid`: enables GROBID/BibTeX reference ingestion through
 //!   [`grobid-bibtex`](https://crates.io/crates/grobid-bibtex).
 
@@ -29,6 +30,8 @@ mod chat_view;
 mod composer;
 mod markdown;
 mod model;
+#[cfg(feature = "ragrig")]
+mod rag;
 mod session_picker;
 mod settings;
 mod side_panel;
@@ -42,6 +45,8 @@ pub use chat_view::{ChatView, ChatViewEvent, EmptyState};
 pub use composer::{Composer, ComposerEvent};
 pub use markdown::stabilize_markdown;
 pub use model::*;
+#[cfg(feature = "ragrig")]
+pub use rag::*;
 pub use session_picker::{SessionPicker, SessionPickerEvent};
 pub use settings::{chat_settings, chat_settings_page};
 pub use side_panel::SidePanel;
