@@ -16,8 +16,8 @@ pub use crate::{
 pub use crate::rag::{
     AgentInfo, AttachmentSource, ChatProvider, IngestPhase, IngestProgress, LibraryDocument,
     LibrarySnapshot, MemoryChoice, PdfBackend, PendingAttachment, RagChat, RagChatEvent,
-    RagCommand, RagController, RagEvent, RagReply, RagSettings, RagSetup, RequestId, SessionInfo,
-    SessionTurn, SyncSummary, rag_settings, rag_settings_page,
+    RagCommand, RagController, RagEvent, RagReply, RagSettings, RagSetup, RequestId,
+    SciscraperAttach, SessionInfo, SessionTurn, SyncSummary, rag_settings, rag_settings_page,
 };
 
 #[cfg(feature = "grobid")]

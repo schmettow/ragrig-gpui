@@ -42,8 +42,8 @@ use grobid_bibtex::cite::CiteState;
 
 use super::{
     AgentInfo, AttachmentSource, IngestPhase, IngestProgress, LibraryDocument, LibrarySnapshot,
-    PendingAttachment, RagCommand, RagEvent, RagReply, RagSetup, RequestId, SessionInfo,
-    SessionTurn, SyncSummary,
+    PendingAttachment, RagCommand, RagEvent, RagReply, RagSetup, RequestId, SciscraperAttach,
+    SessionInfo, SessionTurn, SyncSummary,
 };
 
 /// How often buffered tokens are flushed to the UI.
@@ -1022,6 +1022,19 @@ fn resolve_attachment(
     })
 }
 
+/// Apply a host prompt after the agent is built.
+///
+/// `RagAgent::builder().system_prompt` trusts the caller to include
+/// `{context}`. A plain prompt without the placeholder silently drops both
+/// retrieval and attachments, because Ragrig then has nowhere to substitute
+/// the context block. `RagAgent::set_system_prompt` appends the placeholder
+/// when it is missing, so every host prompt receives context.
+fn apply_system_prompt(agent: &mut RagAgent, prompt: Option<&str>) {
+    if let Some(prompt) = prompt.filter(|prompt| !prompt.trim().is_empty()) {
+        agent.set_system_prompt(prompt.to_owned());
+    }
+}
+
 async fn build_session(setup: &RagSetup) -> Result<AgentSession, String> {
     let mut config = setup.config.clone();
     if matches!(config.chat.provider, Provider::Deepseek) && config.chat.deepseek_api_key.is_none()
@@ -1081,26 +1094,32 @@ async fn build_session(setup: &RagSetup) -> Result<AgentSession, String> {
         .store(vector_store)
         .parsers(parsers)
         .chunk_config(chunk_config)
-        .attach_strategy(Box::new(ragrig::PrependAttach))
+        .attach_strategy(Box::new(SciscraperAttach::with_context_tokens(
+            config.chat.context_tokens,
+        )))
         .context_tokens(config.chat.context_tokens)
         .top_k(config.embed.top_k)
         .similarity_threshold(config.embed.similarity_threshold);
     if let Some(agent) = memory_agent {
         builder = builder.rewriter(agent);
     }
-    if let Some(prompt) = &setup.system_prompt {
-        if !prompt.trim().is_empty() {
-            builder = builder.system_prompt(prompt.clone());
-        }
-    } else if let Some(path) = &config.chat.system_prompt_path {
-        let prompt = fs::read_to_string(path)
-            .map_err(|error| format!("cannot read system prompt '{}': {error}", path.display()))?;
-        builder = builder.system_prompt(prompt);
-    }
+    let system_prompt = match &setup.system_prompt {
+        // An explicitly empty override suppresses the prompt file, matching
+        // the previous builder behavior.
+        Some(prompt) if prompt.trim().is_empty() => None,
+        Some(prompt) => Some(prompt.clone()),
+        None => match &config.chat.system_prompt_path {
+            Some(path) => Some(fs::read_to_string(path).map_err(|error| {
+                format!("cannot read system prompt '{}': {error}", path.display())
+            })?),
+            None => None,
+        },
+    };
 
-    let agent = builder
+    let mut agent = builder
         .build()
         .map_err(|error| format!("cannot build the RAG agent: {error:#}"))?;
+    apply_system_prompt(&mut agent, system_prompt.as_deref());
 
     let sessions = FsSessionStore::new(config.workspace.join(".ragrig/sessions"))
         .map_err(|error| format!("cannot open the session store: {error:#}"))?;
@@ -1180,7 +1199,7 @@ mod tests {
     use anyhow::Result;
     use async_trait::async_trait;
     use ragrig::{
-        AttachStrategy, Generator, PrependAttach, RagrigConfig,
+        AttachStrategy, Generator, RagrigConfig,
         embed::{Embedder, Embedding},
     };
     use tokio::time::timeout;
@@ -1296,11 +1315,11 @@ mod tests {
         RagSetup::new(config)
     }
 
-    async fn test_session(
+    async fn test_agent(
         workspace: &Path,
         chunks: Vec<String>,
         delay: Duration,
-    ) -> (AgentSession, Arc<Mutex<Vec<String>>>) {
+    ) -> (RagAgent, Arc<Mutex<Vec<String>>>) {
         let prompts = Arc::new(Mutex::new(Vec::new()));
         let chat = FakeChat {
             chunks,
@@ -1313,9 +1332,20 @@ mod tests {
             .embed(Box::new(FakeEmbedder))
             .store(store)
             .chunk_config(ChunkConfig::new(64, 8).expect("chunk config"))
-            .attach_strategy(Box::new(PrependAttach) as Box<dyn AttachStrategy>)
+            .attach_strategy(
+                Box::new(SciscraperAttach::with_context_tokens(4096)) as Box<dyn AttachStrategy>
+            )
             .build()
             .expect("build agent");
+        (agent, prompts)
+    }
+
+    async fn test_session(
+        workspace: &Path,
+        chunks: Vec<String>,
+        delay: Duration,
+    ) -> (AgentSession, Arc<Mutex<Vec<String>>>) {
+        let (agent, prompts) = test_agent(workspace, chunks, delay).await;
         let sessions =
             FsSessionStore::new(workspace.join(".ragrig/sessions")).expect("session store");
         (AgentSession::new(agent, Box::new(sessions)), prompts)
@@ -1614,6 +1644,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(workspace);
     }
 
+    #[tokio::test]
+    async fn a_plain_system_prompt_still_receives_attachments() {
+        let workspace = temp_workspace("prompt-context");
+        let (mut agent, prompts) = test_agent(&workspace, answer_chunks(), Duration::ZERO).await;
+        apply_system_prompt(&mut agent, Some("Answer tersely."));
+        assert!(
+            agent.system_prompt().contains("{context}"),
+            "the agent must have a context placeholder"
+        );
+
+        let sessions =
+            FsSessionStore::new(workspace.join(".ragrig/sessions")).expect("session store");
+        let mut session = AgentSession::new(agent, Box::new(sessions));
+        let result = session
+            .chat_detailed_with_attachments(
+                "summarise the paper",
+                &[AttachedDocument {
+                    name: "@Kano2025".to_owned(),
+                    content: "ATTACHED PAPER BODY".to_owned(),
+                }],
+            )
+            .await;
+        assert!(result.is_ok());
+
+        let prompts = prompts.lock().expect("prompts");
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("Answer tersely."));
+        assert!(prompts[0].contains("<sciscraper:v1:context source=\"creator\">"));
+        assert!(prompts[0].contains(
+            "<sciscraper:v1:document name=\"@Kano2025\">ATTACHED PAPER BODY</sciscraper:v1:document>"
+        ));
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
     #[cfg(feature = "grobid")]
     #[tokio::test]
     async fn citations_attach_the_paper_and_reach_the_prompt() {
@@ -1660,6 +1725,46 @@ mod tests {
         let prompts = prompts.lock().expect("prompts");
         assert_eq!(prompts.len(), 1);
         assert!(prompts[0].contains("CITED PAPER BODY"));
+
+        commands.close();
+        handle.join().expect("worker thread");
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn several_file_attachments_reach_the_prompt_as_documents() {
+        let workspace = temp_workspace("attach-files");
+        std::fs::create_dir_all(workspace.join("papers")).expect("papers");
+        let first = workspace.join("papers/Kano2025.md");
+        let second = workspace.join("papers/Kobayashi2011.md");
+        std::fs::write(&first, "KANO PAPER BODY").expect("first paper");
+        std::fs::write(&second, "KOBAYASHI PAPER BODY").expect("second paper");
+
+        let (session, prompts) = test_session(&workspace, answer_chunks(), Duration::ZERO).await;
+        let (commands, events, handle) = spawn(&workspace, session);
+        let _ = wait_for(&events, |event| matches!(event, RagEvent::AgentReady(_))).await;
+
+        commands
+            .send(RagCommand::Ask {
+                id: RequestId::new(7),
+                prompt: "compare the two papers".to_owned(),
+                attachments: vec![
+                    PendingAttachment::file("first", "@Kano2025", first),
+                    PendingAttachment::file("second", "@Kobayashi2011", second),
+                ],
+            })
+            .await
+            .expect("send ask");
+        let _ = wait_for(&events, |event| matches!(event, RagEvent::Finished { .. })).await;
+
+        let prompts = prompts.lock().expect("prompts");
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains(
+            "<sciscraper:v1:document name=\"@Kano2025\">KANO PAPER BODY</sciscraper:v1:document>"
+        ));
+        assert!(prompts[0].contains(
+            "<sciscraper:v1:document name=\"@Kobayashi2011\">KOBAYASHI PAPER BODY</sciscraper:v1:document>"
+        ));
 
         commands.close();
         handle.join().expect("worker thread");

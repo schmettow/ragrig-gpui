@@ -536,7 +536,9 @@ fn default_workspace() -> PathBuf {
 }
 
 fn default_prompt() -> String {
-    "Answer from the indexed corpus and cite the documents you used.".to_owned()
+    "Answer from the attached context and the indexed corpus. Cite each paper by its @Key. \
+     If the context does not support an answer, say what is missing instead of guessing."
+        .to_owned()
 }
 
 fn validate_profile_name(name: &str) -> Result<(), String> {

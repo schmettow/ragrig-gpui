@@ -142,6 +142,20 @@ ragrig-gpui
 - The worker caches a `CiteState` for the workspace bibliography and resolves
   citations on its blocking pool before generation. A folder parsed with
   GROBID joins the citation corpora even when it was not indexed.
+- Host prompts are applied with `RagAgent::set_system_prompt`, which appends
+  `{context}` when a prompt does not contain it. Without that placeholder,
+  Ragrig has nowhere to substitute retrieved chunks or attached papers, so the
+  model never sees either.
+- `SciscraperAttach` formats context with the co-writer prompt's
+  `<sciscraper:v1:context source="creator">` and `source="corpus"`
+  containers. Attached `@Key` papers therefore arrive as
+  `<sciscraper:v1:document name="@Key">…</sciscraper:v1:document>`, not as
+  generic `[Attached: …]` blocks.
+- The same strategy budgets the context block for `context_tokens`: explicit
+  attachments receive 70% of the window and retrieval the rest, so a 36k-char
+  paper cannot push itself out of a 4096-token model. Shortened papers carry a
+  `<sciscraper:v1:truncated shown="…" total="…"/>` marker, which the co-writer
+  prompt already understands.
 - `rag_settings(id, settings, controller, cx)` builds the complete page;
   Apply is explicit.
 
@@ -155,11 +169,11 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 62 active library tests (including seven actor tests with a fake
-generator and embedder, citation-resolution tests, and GPUI hover, selection
-and bulk-clipboard tests), 2 gallery tests, 5 active spike tests plus one
-ignored typing benchmark, and 2 doctests. One GROBID end-to-end test is
-ignored by default:
+Current suite: 69 active library tests (including nine actor tests with a fake
+generator and embedder, context-format and budgeting tests, citation-resolution
+tests, and GPUI hover, selection and bulk-clipboard tests), 2 gallery tests, 5
+active spike tests plus one ignored typing benchmark, and 2 doctests. One
+GROBID end-to-end test is ignored by default:
 
 ```sh
 cargo test --all-features grobid_extracts_the_test_library_end_to_end \

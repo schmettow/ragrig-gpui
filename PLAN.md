@@ -441,6 +441,21 @@ Delivered at the user's request before M3. The version stays at 0.2.0;
   Sciscraper order: question, `Attached: @Key`, then the streaming answer.
 - `RagSettings::resolve_citations` (default **on**) is exposed as **Use @key
   citations** in Settings → References and threaded through `RagSetup`.
+- **Prompt context fix.** `RagAgent::builder().system_prompt` trusts the caller
+  to include `{context}`, while `RagAgent::set_system_prompt` appends it. The
+  controller now applies prompts through the latter, so a plain prompt no
+  longer silently drops retrieval and attachments. A regression test asserts
+  that a prompt without the placeholder still receives an attached paper.
+- **Sciscraper context containers.** `SciscraperAttach` replaces the generic
+  `[Attached: …]` format with the co-writer prompt's
+  `<sciscraper:v1:context source="creator">` / `source="corpus"`
+  containers, so an attached `@Key` paper is visibly a document, not a
+  retrieval miss.
+- **Context budget.** The strategy receives the configured `context_tokens`,
+  gives 70% of the block to explicit attachments and the rest to retrieval,
+  and adds `<sciscraper:v1:truncated shown="…" total="…"/>` to shortened
+  papers. Without this, a 36k-char cited PDF plus 9k chars of retrieval
+  overflowed a 4096-token model and Ollama dropped the attachment.
 - A folder parsed with GROBID joins the citation corpora even when it was not
   indexed, so references extracted from a folder are immediately citable.
 - **Multi-select.** `ReferenceSelection` stores keys, not indices, so a
@@ -452,16 +467,20 @@ Delivered at the user's request before M3. The version stays at 0.2.0;
   The demo mounts it in the Library panel footer, where it stays visible while
   the list scrolls. Copy actions write the clipboard; attach and clear are
   reported to the host, which owns the chat and selection.
-- 62 active library tests, including citation resolution (recorded file,
-  keyed fallback, aliases, cap, truncation, missing bibliography), a worker
-  roundtrip that proves the attached text reaches the prompt, and GPUI tests
-  for the hover **+**, toggling, and both bulk clipboard actions.
+- 69 active library tests, including citation resolution (recorded file,
+  keyed fallback, aliases, cap, truncation, missing bibliography), worker
+  roundtrips that prove two multi-selected files reach the prompt with and
+  without a custom placeholder, context-container formatting and budgeting,
+  and GPUI tests for the hover **+**, toggling, and both bulk clipboard
+  actions.
 
 Acceptance: with the running GROBID server, the ignored end-to-end test
 produced the three test-library records and resolved the first key through the
 real PDF parser. In the demo, a question containing `@Kano2025` showed
-`Attached: @Kano2025` above the answer and the status line reported the
-attached paper.
+`Attached: @Kano2025` above the answer. After the prompt and budgeting fixes,
+llama3.2:3b summarised the attached paper from its body text even with a
+4096-token context, and two multi-selected files arrive as two creator
+containers.
 
 ### M6 — Hardening and publication (3–5 days)
 

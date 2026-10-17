@@ -12,12 +12,14 @@
 //! from GPUI's executor.
 
 mod actor;
+mod attach;
 mod chat;
 mod config;
 mod controller;
 mod protocol;
 mod settings_page;
 
+pub use attach::SciscraperAttach;
 pub use chat::{RagChat, RagChatEvent};
 pub use config::{ChatProvider, MemoryChoice, PdfBackend, RagSettings, RagSetup};
 pub use controller::RagController;
