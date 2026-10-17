@@ -4,10 +4,13 @@ version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
-description = "Reusable GPUI components for Ragrig RAG chat and reference ingestion"
+description = "Reusable GPUI components for Ragrig RAG chat, citations, and reference ingestion"
 readme = "README.md"
-keywords = ["gpui", "rag", "ui", "chat"]
-categories = ["gui"]
+repository = "https://github.com/schmettow/ragrig-gpui"
+homepage = "https://github.com/schmettow/ragrig-gpui"
+keywords = ["gpui", "rag", "ui", "chat", "llm"]
+categories = ["gui", "text-processing"]
+exclude = ["test_library/**"]
 
 [features]
 default = ["ragrig"]
