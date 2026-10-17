@@ -1,0 +1,30 @@
+[package]
+name = "ragrig-gpui"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Reusable GPUI components for Ragrig RAG chat and reference ingestion"
+readme = "README.md"
+keywords = ["gpui", "rag", "ui", "chat"]
+categories = ["gui"]
+
+[features]
+default = ["ragrig"]
+ragrig = ["dep:ragrig", "dep:tokio"]
+grobid = ["dep:grobid-bibtex"]
+
+[dependencies]
+async-channel = "2"
+gpui-kit = "0.7.3"
+ragrig = { version = "1.1", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"], optional = true }
+grobid-bibtex = { version = "0.2.1", features = ["openalex"], optional = true }
+
+[dev-dependencies]
+gpui-kit = { version = "0.7.3", features = ["test-support"] }
+tokio = { version = "1", features = ["rt", "time"] }
+
+[[example]]
+name = "spike"
+test = true
