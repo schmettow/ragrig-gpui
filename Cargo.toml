@@ -28,3 +28,7 @@ tokio = { version = "1", features = ["rt", "time"] }
 [[example]]
 name = "spike"
 test = true
+
+[[example]]
+name = "gallery"
+test = true

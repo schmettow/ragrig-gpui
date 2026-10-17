@@ -1,6 +1,6 @@
 # ragrig-gpui — port plan
 
-Status: M0 foundation spike complete (2026-10-17). Gate passed; M1 is next.
+Status: M0 spike and M1 primitives complete (2026-10-17). M2 is next.
 Date: 2026-10-17.
 
 ## 1. Starting point
@@ -18,8 +18,8 @@ Date: 2026-10-17.
   Its trait objects are `Send + Sync`, so an `AgentSession` can live in a
   dedicated Tokio actor. Progress and cancellation are synchronous callback
   traits (`Progress`, `Cancel`, `CancellationToken`).
-- `ragrig-gpui` contains the M0 library skeleton (`CancelFlag`, `init`),
-  the `spike` example, and the plan below. The crate names `ragrig-gpui` and
+- `ragrig-gpui` contains the M0 spike, the M1 primitive library and widget
+  gallery, and the plan below. The crate names `ragrig-gpui` and
   `sciscraper-gpui` are free on crates.io.
 
 ## 2. What changed in the GPUI ecosystem
@@ -66,14 +66,16 @@ the optional `speech` feature.
 ### 3.1 Layers
 
 ```text
-examples/ragchat.rs (binary demo, ships in the crate, M2)
-  AppView, onboarding, chat panel, library, settings, persistence
+examples/gallery.rs (M1 widget gallery, ships in the crate)
+  dock layout, seeded transcript, mock stream, settings, attachments
         │
 ragrig-gpui (library)
-  widgets/        GPUI projection of plain models (no ragrig dependency)
-  model/          ChatState, Component, Attachment, SessionEntry, LibrarySnapshot
-  reducers/       pure state transitions (testable without a window)
-  rag/ (feature)  RagController: Tokio actor + command/event bridge + adapters
+  model/          ChatState, messages, attachments, components, sessions, settings
+  chat_view.rs    transcript + per-message TextViewState + source chips
+  composer.rs     auto-growing input, send/stop events
+  attachments.rs  attachment chips
+  session_picker.rs, agent_bar.rs, side_panel.rs
+  settings.rs     ChatSettings + SettingPage helper
         │
 gpui-kit 0.7.3 (gpui-pre + gpui-base + gpui-component + assets)
 ```
@@ -270,27 +272,49 @@ they are upper bounds, not paint latency.
   layout persistence. `Select` is straightforward; the dialog/drop and
   persistence land with the library work.
 
-### M1 — Primitive port, mock data (4–6 days)
+### M1 — Primitive port, mock data (done, 2026-10-17)
 
-- `model/`: `ChatRole`, `MessageState`, `MessageMeta`, `SourceRef`,
-  `ComponentKind`, `ComponentStatus`, `Attachment`, `SessionEntry`.
-- `ChatView` + `ChatState` reducer; per-message `TextViewState` for incremental
-  Markdown; streaming caret; metadata footer; empty/error/stopped states;
-  copy message; source chips.
-- `Composer` entity: send/stop, `secondary-enter`, bounded growth,
-  append/focus, enablement; map `CancelFlag` to the controller's cancellation.
-- `AttachmentRows`, `SessionPicker`, `AgentBar` + popover menus,
-  `SidePanel`, `setting`-based helpers; register dock panels for layout
-  persistence and prove a two-tab group.
-- `init(cx)` and `prelude`; `#![warn(missing_docs)]`, no `unsafe`.
-- Widget gallery demo with every state and mock messages.
-- Tests: pure reducers; headless GPUI click/keyboard tests; worker tests
-  outside the GPUI test scheduler.
+Delivered:
+
+- `model/`: `ChatRole`, `MessageState`, `ChatState`, `MessageMeta`, `SourceRef`,
+  `NewMessage`, `Attachment`, `ComponentKind`/`ComponentStatus`, `SessionEntry`,
+  `ChatSettings`; all reducers are pure and unit-tested.
+- `ChatView`: tail-following transcript with one `Entity<TextViewState>` per
+  message, incremental `push_str`, final fence stabilization, streaming dot,
+  stopped/error states, metadata footer, source chips, copy and retry events.
+- `Composer`: auto-grow input, Ctrl/⌘+Enter submit, Return newline, Send/Stop
+  events, draft/focus/clear helpers, streaming and disabled state.
+- `AttachmentRows`, `SessionPicker`, `AgentBar` with per-component popovers,
+  `SidePanel`, and `chat_settings` / `chat_settings_page`.
+- `init(cx)`, `prelude`, `#![warn(missing_docs)]`, no `unsafe`.
+- `examples/gallery.rs`: seeded complete/stopped/error transcript, live mock
+  stream, two-tab left and right docks, registered dock panels, settings and
+  component views.
+- 31 library tests, 2 gallery tests, 5 active spike tests + 1 ignored
+  benchmark, 2 doctests. Clippy `-D warnings` clean.
+
+Deviations and findings:
+
+- A true inline streaming caret would require modifying the Markdown text. The
+  view uses a blinking status dot plus a `streaming` label instead; the text
+  stays clean for selection and copy.
+- Streaming bodies stay raw in the `TextViewState`; `finish`/`stop` apply
+  `stabilize_markdown` once, so an open fence cannot swallow later tokens.
+- The GPUI test scheduler cannot advance a foreign worker thread, so the
+  gallery's mock stream uses GPUI timers and deterministic `advance_clock`
+  tests. The M0 Tokio worker test remains outside the GPUI scheduler.
+- `CancelFlag` is not wired to the gallery: there is no controller yet. The
+  Composer's `Stop` event is the seam M2 will connect to
+  `CancelFlag`/`CancellationToken`.
+- Dock panels are registered, but the gallery does not load or save layouts;
+  M3 adds `.ragrig/gpui.json` persistence.
 
 ### M2 — Controller and RAG chat demo (5–8 days)
 
 - Feature `ragrig`: `RagCommand` / `RagEvent`, `RagController` entity,
   dedicated Tokio actor, cancellation, streaming batches, error mapping.
+- Wire `ComposerEvent` to the controller; map `Stop` through `CancelFlag` into
+  the actor's `CancellationToken`; keep partial answers.
 - Build/replace the agent from `RagrigConfig`; sessions
   (`FsSessionStore`), attachments (`DocumentParsers`), empty-library
   pure-chat mode (do not copy the CLI's `NoDocumentsFound` startup error).
@@ -300,7 +324,7 @@ they are upper bounds, not paint latency.
   profiles; explicit Apply; validation; test-connection.
 - Acceptance: with Ollama, index a folder with PDFs, stream answers,
   cancel, load old sessions, change chat settings; empty library still
-  chats; no UI freezes.
+  chats; no UI freezes. Release 0.2.0.
 
 ### M3 — Library management (4–6 days)
 
@@ -346,7 +370,7 @@ they are upper bounds, not paint latency.
 | D1 | **`gpui-kit = "0.7.3"`** as the single facade; the library never imports `gpui` directly. Fallback: official `gpui 0.2.2` + `gpui-component 0.5.1`. |
 | D2 | **`ragrig` is a default feature**; the controller lives in the library and the example uses it from M2. |
 | D3 | Tiered releases: **0.2.0 after M2**, **0.3.0 after M3**. |
-| D4 | **Single crate + example**: no workspace member; `examples/spike.rs` now, `examples/ragchat.rs` from M2. |
+| D4 | **Single crate + example**: no workspace member; `examples/spike.rs` (M0), `examples/gallery.rs` (M1), `examples/ragchat.rs` from M2. |
 | D5 | **Hybrid state**: entities for chat/composer/pickers/library/settings; plain builders for rows, chips, and the agent bar; pure reducers. |
 | D6 | **Controller in the library**; no slash-command parser. |
 | D7 | **Dedicated Tokio runtime thread**; one actor owns `AgentSession`; bounded events; batched tokens; `CancellationToken`. |
