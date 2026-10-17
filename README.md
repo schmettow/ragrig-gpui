@@ -21,11 +21,24 @@ Requirements:
 sudo apt install libxkbcommon-dev libxkbcommon-x11-dev
 ```
 
-Run the spike:
+Run the spike **from this crate's directory**:
 
 ```sh
+cd ragrig-gpui
 cargo run --example spike --no-default-features
 ```
+
+Or from anywhere, select the manifest explicitly:
+
+```sh
+cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml \
+  --example spike --no-default-features
+```
+
+`cargo run --example` resolves against the package in the current directory.
+A parent directory that has its own `Cargo.toml` (as in a multi-crate
+checkout) is a different package and will report `no example target named
+spike`.
 
 `--no-default-features` skips the Ragrig dependency graph; the spike uses a
 fake streaming worker. The default build (`--features ragrig`) is the one M2
