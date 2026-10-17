@@ -12,7 +12,9 @@ use std::{
 
 use crate::model::{ChatRole, SourceRef};
 #[cfg(feature = "grobid")]
-use crate::references::{ReferenceEntry, ReferenceOptions, ReferenceProgress, ReferenceReport};
+use crate::references::{
+    CitationAttachment, ReferenceEntry, ReferenceOptions, ReferenceProgress, ReferenceReport,
+};
 
 use super::RagSetup;
 
@@ -461,6 +463,14 @@ pub enum RagEvent {
         id: RequestId,
         /// Error chain.
         message: String,
+    },
+    /// The `@key` mentions of a question were resolved before generation.
+    #[cfg(feature = "grobid")]
+    Citations {
+        /// One attachment per distinct document, in mention order.
+        resolved: Vec<CitationAttachment>,
+        /// One readable line per key that could not be attached.
+        missed: Vec<String>,
     },
     /// A non-fatal notice for the host's status line.
     Notice(String),

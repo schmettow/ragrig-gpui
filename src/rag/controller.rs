@@ -358,7 +358,7 @@ impl RagController {
             } else {
                 ComponentStatus::Inactive
             };
-            let mut components: Vec<AgentComponent> = [
+            let components: Vec<AgentComponent> = [
                 (ComponentKind::Chat, "Chat model"),
                 (ComponentKind::Embedder, "Embedder"),
                 (ComponentKind::Store, "Vector store"),
@@ -370,10 +370,14 @@ impl RagController {
             .map(|(kind, label)| AgentComponent::new(kind_label(kind), kind, label).status(status))
             .collect();
             #[cfg(feature = "grobid")]
-            components.push(
-                AgentComponent::new("references", ComponentKind::References, "GROBID")
-                    .status(status),
-            );
+            let components = {
+                let mut components = components;
+                components.push(
+                    AgentComponent::new("references", ComponentKind::References, "GROBID")
+                        .status(status),
+                );
+                components
+            };
             return components;
         };
 
@@ -388,7 +392,7 @@ impl RagController {
             ComponentStatus::Ready
         };
 
-        let mut components = vec![
+        let components = vec![
             AgentComponent::new("chat", ComponentKind::Chat, agent.chat_model.clone())
                 .status(chat)
                 .detail(format!("{} · {} memory", agent.chat_backend, agent.memory)),
@@ -416,7 +420,8 @@ impl RagController {
                 .detail(format!("top {}", agent.top_k)),
         ];
         #[cfg(feature = "grobid")]
-        {
+        let components = {
+            let mut components = components;
             let status = if self.reference_progress.is_some() {
                 ComponentStatus::Busy
             } else if self.references.is_empty() {
@@ -439,7 +444,8 @@ impl RagController {
                     .status(status)
                     .detail(detail),
             );
-        }
+            components
+        };
         components
     }
 
@@ -503,6 +509,8 @@ impl RagController {
                     agent.documents = snapshot.documents.len();
                 }
             }
+            #[cfg(feature = "grobid")]
+            RagEvent::Citations { .. } => {}
             #[cfg(feature = "grobid")]
             RagEvent::ReferencesStarted { id, folder } => {
                 self.reference_request = Some(*id);

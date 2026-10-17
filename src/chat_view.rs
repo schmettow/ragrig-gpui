@@ -162,6 +162,42 @@ impl ChatView {
         self.push_message(NewMessage::system(text), cx)
     }
 
+    /// Insert a system notice immediately before `before`.
+    ///
+    /// Use this for per-question context notes: the note then appears between
+    /// the question and the assistant placeholder, exactly where the attached
+    /// papers belong. Returns `false` when `before` is unknown.
+    pub fn push_system_before(
+        &mut self,
+        before: MessageId,
+        text: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let text = text.into();
+        let Some(index) = self
+            .state
+            .read(cx)
+            .messages()
+            .iter()
+            .position(|message| message.id() == before)
+        else {
+            return false;
+        };
+        let inserted = self.state.update(cx, |state, _| {
+            state.insert_before(before, NewMessage::system(text.clone()))
+        });
+        let Some(id) = inserted else {
+            return false;
+        };
+        self.cache_text(id, &text, false, cx);
+        let spliced = self
+            .scroller
+            .update(cx, |scroller, cx| scroller.splice(index..index, 1, cx));
+        debug_assert!(spliced, "the transcript and scroller counts diverged");
+        cx.notify();
+        true
+    }
+
     /// Start an empty streaming assistant message.
     pub fn begin_assistant(&mut self, cx: &mut Context<Self>) -> MessageId {
         self.push_message(NewMessage::assistant("").streaming(), cx)
@@ -741,6 +777,32 @@ mod tests {
             assert_eq!(state.messages()[1].id(), assistant);
             assert_eq!(state.messages()[1].text(), "Answer");
             assert_eq!(view.texts.read(cx).len(), 2);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn a_context_note_can_be_inserted_before_the_answer(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let view = cx.new(ChatView::new);
+
+        cx.update(|cx| {
+            view.update(cx, |view, cx| {
+                view.push_user("Question", cx);
+                let assistant = view.begin_assistant(cx);
+                assert!(view.push_system_before(assistant, "Attached: @Kano2025", cx));
+
+                let state = view.state.read(cx);
+                assert_eq!(state.len(), 3);
+                assert_eq!(
+                    state
+                        .messages()
+                        .iter()
+                        .map(ChatMessage::role)
+                        .collect::<Vec<_>>(),
+                    [ChatRole::User, ChatRole::System, ChatRole::Assistant]
+                );
+                assert_eq!(view.texts.read(cx).len(), 3);
+            });
         });
     }
 

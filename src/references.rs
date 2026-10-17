@@ -8,12 +8,18 @@
 //! - [`ReferenceEntry`] rows with authors, year, title, venue and a resolved
 //!   PDF path;
 //! - [`ReferenceRow`], a two-line row whose **Copy @key** and **Copy path**
-//!   actions appear while the pointer is over it.
+//!   actions appear while the pointer is over it, plus a leading **+** that
+//!   toggles multi-selection;
+//! - [`ReferenceSelection`] and [`ReferenceSelectionBar`], the bulk actions for
+//!   a set of selected rows;
+//! - [`resolve_citations`], which turns the `@key` mentions of a question into
+//!   one-shot context documents.
 //!
 //! Available with the `grobid` feature.
 
 use biblatex::ChunksExt;
 use std::{
+    collections::{BTreeSet, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -23,7 +29,7 @@ use gpui_kit::{
     RenderOnce, SharedString, Styled as _, Window,
     assets::IconName,
     component::{
-        ActiveTheme as _, Disableable as _, Sizable as _,
+        ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex, v_flex,
     },
@@ -33,12 +39,14 @@ use gpui_kit::{
 };
 use grobid_bibtex::{
     Collection,
+    cite::{CiteState, Located},
     files::collect_pdfs,
     prepass::{
         BibtexTarget, PrepassConfig, PrepassError, PrepassObserver, PrepassProgress, PrepassReport,
         PrepassStage, prepass_with,
     },
 };
+use ragrig::{AttachedDocument, DocumentParsers};
 
 /// Server and pipeline options for one reference extraction run.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -280,6 +288,192 @@ impl ReferenceReport {
     }
 }
 
+/// Maximum number of `@key` papers attached to one query.
+pub const MAX_CITATIONS: usize = 3;
+/// Maximum characters attached per `@key` paper.
+pub const MAX_CITATION_CHARS: usize = 100_000;
+
+/// One `@key` paper that was attached to a query.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CitationAttachment {
+    /// Canonical citation key.
+    pub key: String,
+    /// PDF or document that supplied the context.
+    pub path: PathBuf,
+}
+
+/// Result of resolving the `@key` mentions of one query.
+#[derive(Default)]
+pub(crate) struct CitationResolution {
+    /// Documents ready for Ragrig's attach strategy.
+    pub attachments: Vec<AttachedDocument>,
+    /// Canonical keys that were attached (aliases count).
+    pub resolved: Vec<String>,
+    /// One attachment per distinct file, for source chips.
+    pub attached: Vec<CitationAttachment>,
+    /// One readable line per key that could not be attached.
+    pub missed: Vec<String>,
+}
+
+/// Resolve `@key` mentions against the bibliography and the active corpora.
+///
+/// Mirrors the host-side resolution in Sciscraper: the recorded `file` field
+/// first, then a corpus file named after the key; up to [`MAX_CITATIONS`]
+/// papers, each truncated to [`MAX_CITATION_CHARS`] characters. Misses never
+/// abort the query; they are returned for the transcript note.
+pub(crate) fn resolve_citations(
+    state: &mut CiteState,
+    bibliography: &Path,
+    corpora: &[PathBuf],
+    keys: &[String],
+    parsers: &DocumentParsers,
+) -> CitationResolution {
+    let mut resolution = CitationResolution::default();
+    if keys.is_empty() {
+        return resolution;
+    }
+    if !bibliography.is_file() {
+        for key in keys {
+            resolution.missed.push(format!(
+                "@{key} — no bibliography at {}",
+                bibliography.display()
+            ));
+        }
+        return resolution;
+    }
+
+    let corpus_paths: Vec<&Path> = corpora.iter().map(PathBuf::as_path).collect();
+    let located = state.locate(keys, Some(bibliography), &corpus_paths);
+    let mut attached_paths: HashSet<PathBuf> = HashSet::new();
+    for item in located {
+        match item {
+            Located::Found { key, path, .. } => {
+                if !attached_paths.insert(path.clone()) {
+                    // Aliases of an already attached document count as
+                    // resolved, but do not produce a second context block.
+                    resolution.resolved.push(key);
+                    continue;
+                }
+                if resolution.attachments.len() >= MAX_CITATIONS {
+                    resolution.missed.push(format!(
+                        "@{key} — attachment limit ({MAX_CITATIONS}) reached"
+                    ));
+                    continue;
+                }
+                match parsers.parse(&path) {
+                    Ok(text) => {
+                        resolution.attachments.push(AttachedDocument {
+                            name: format!("@{key}"),
+                            content: truncate_text(text, MAX_CITATION_CHARS),
+                        });
+                        resolution.resolved.push(key.clone());
+                        resolution.attached.push(CitationAttachment { key, path });
+                    }
+                    Err(error) => resolution.missed.push(format!(
+                        "@{key} — cannot read {}: {error:#}",
+                        path.display()
+                    )),
+                }
+            }
+            other => resolution.missed.push(other.describe()),
+        }
+    }
+    resolution
+}
+
+/// Build the `@key @key` text for a set of selected rows.
+pub fn keys_text(entries: &[ReferenceEntry]) -> String {
+    entries
+        .iter()
+        .map(|entry| entry.copy_key_text())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Build the newline-separated absolute paths of a set of rows.
+pub fn paths_text(entries: &[ReferenceEntry]) -> String {
+    entries
+        .iter()
+        .filter_map(|entry| entry.path.as_ref())
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Keys selected in a reference list, keyed by citation key.
+///
+/// Selection survives list refreshes: [`retain_existing`](Self::retain_existing)
+/// drops keys that disappeared, and rows are always returned in list order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReferenceSelection {
+    keys: BTreeSet<String>,
+}
+
+impl ReferenceSelection {
+    /// Number of selected keys.
+    pub fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    /// Whether nothing is selected.
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+
+    /// Whether `key` is selected.
+    pub fn contains(&self, key: &str) -> bool {
+        self.keys.contains(key)
+    }
+
+    /// Select `key`; returns whether it was newly added.
+    pub fn insert(&mut self, key: impl Into<String>) -> bool {
+        self.keys.insert(key.into())
+    }
+
+    /// Deselect `key`; returns whether it was selected.
+    pub fn remove(&mut self, key: &str) -> bool {
+        self.keys.remove(key)
+    }
+
+    /// Toggle `key`; returns the new selection state.
+    pub fn toggle(&mut self, key: impl Into<String>) -> bool {
+        let key = key.into();
+        if self.keys.remove(&key) {
+            false
+        } else {
+            self.keys.insert(key);
+            true
+        }
+    }
+
+    /// Clear every selection.
+    pub fn clear(&mut self) {
+        self.keys.clear();
+    }
+
+    /// Drop selected keys that no longer exist in `entries`.
+    pub fn retain_existing(&mut self, entries: &[ReferenceEntry]) {
+        let available: HashSet<&str> = entries.iter().map(|entry| entry.key.as_str()).collect();
+        self.keys.retain(|key| available.contains(key.as_str()));
+    }
+
+    /// The selected entries, in the order they appear in `entries`.
+    pub fn entries<'a>(&self, entries: &'a [ReferenceEntry]) -> Vec<&'a ReferenceEntry> {
+        entries
+            .iter()
+            .filter(|entry| self.keys.contains(&entry.key))
+            .collect()
+    }
+}
+
+fn truncate_text(text: String, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        text
+    } else {
+        text.chars().take(max_chars).collect()
+    }
+}
+
 pub(crate) enum ExtractionError {
     Cancelled,
     Failed(String),
@@ -475,18 +669,23 @@ fn normalize_text(text: &str) -> String {
 }
 
 type CopyHandler = Rc<dyn Fn(ReferenceCopy, &mut Window, &mut App)>;
+type SelectHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
-/// A two-line reference row with hover-revealed copy actions.
+/// A two-line reference row with hover-revealed copy and selection actions.
 ///
-/// While the pointer is over the row, **Copy @key** and **Copy path** appear
-/// at its trailing edge. Both buttons are laid out in every frame, so the text
-/// never jumps when they become visible. A row without a resolved PDF keeps
-/// the path button disabled and explains why in its tooltip.
+/// While the pointer is over the row, a **+** appears at its leading edge and
+/// **Copy @key** / **Copy path** at its trailing edge. Every control keeps its
+/// slot in every frame, so the text never jumps when the actions become
+/// visible. A row without a resolved PDF keeps the path button disabled and
+/// explains why in its tooltip.
 #[derive(IntoElement)]
 pub struct ReferenceRow {
     index: usize,
     entry: ReferenceEntry,
     on_copy: Option<CopyHandler>,
+    on_select: Option<SelectHandler>,
+    selectable: bool,
+    selected: bool,
 }
 
 impl ReferenceRow {
@@ -496,6 +695,9 @@ impl ReferenceRow {
             index,
             entry,
             on_copy: None,
+            on_select: None,
+            selectable: false,
+            selected: false,
         }
     }
 
@@ -510,6 +712,29 @@ impl ReferenceRow {
         self.on_copy = Some(Rc::new(handler));
         self
     }
+
+    /// Show the leading **+** toggle and report clicks.
+    ///
+    /// Implies [`selectable`](Self::selectable).
+    pub fn on_select(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_select = Some(Rc::new(handler));
+        self.selectable = true;
+        self
+    }
+
+    /// Reserve the leading selection slot without a click handler.
+    ///
+    /// Use [`on_select`](Self::on_select) for an interactive toggle.
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
+    /// Paint the row as selected and keep the leading toggle visible.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
 }
 
 impl RenderOnce for ReferenceRow {
@@ -521,6 +746,49 @@ impl RenderOnce for ReferenceRow {
         let meta = self.entry.meta_line();
         let path = self.entry.path.clone();
         let handler = self.on_copy;
+        let selected = self.selected;
+        let hover_bg = if selected {
+            theme.primary.opacity(0.16)
+        } else {
+            theme.muted.opacity(0.28)
+        };
+
+        let toggle = (self.selectable || selected).then(|| {
+            let on_select = self.on_select;
+            let button = Button::new(ElementId::Name(
+                format!("reference-{}-select", self.index).into(),
+            ))
+            .icon(if selected {
+                IconName::Check
+            } else {
+                IconName::Plus
+            })
+            .small()
+            .ghost()
+            .selected(selected)
+            .toggled(selected)
+            .tooltip(if selected {
+                "Deselect reference"
+            } else {
+                "Select reference"
+            })
+            .when_some(on_select, |button, on_select| {
+                button.on_click(move |_, window, cx| on_select(window, cx))
+            });
+            div()
+                .debug_selector(|| format!("reference-select-{}", self.index))
+                .flex_none()
+                .w(px(24.))
+                .h(px(24.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(!selected, |slot| {
+                    slot.invisible()
+                        .group_hover(group.clone(), |slot| slot.visible())
+                })
+                .child(button)
+        });
 
         let copy_key = {
             let key = key.clone();
@@ -577,15 +845,21 @@ impl RenderOnce for ReferenceRow {
             .p_2()
             .rounded(theme.radius)
             .border_1()
-            .border_color(theme.border)
-            .hover(|this| this.bg(theme.muted.opacity(0.28)))
+            .border_color(if selected {
+                theme.primary.opacity(0.55)
+            } else {
+                theme.border
+            })
+            .when(selected, |this| this.bg(theme.primary.opacity(0.10)))
+            .hover(move |this| this.bg(hover_bg))
+            .when_some(toggle, |this, toggle| this.child(toggle))
             .child(
                 div()
                     .w(px(3.))
                     .h(px(28.))
                     .flex_none()
                     .rounded_full()
-                    .bg(theme.primary.opacity(0.65)),
+                    .bg(theme.primary.opacity(if selected { 1.0 } else { 0.65 })),
             )
             .child(
                 v_flex()
@@ -639,6 +913,161 @@ impl RenderOnce for ReferenceRow {
                             .child(copy_path),
                     ),
             )
+    }
+}
+
+/// A bulk action offered by [`ReferenceSelectionBar`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReferenceAction {
+    /// Write the selected `@key` mentions to the clipboard.
+    CopyKeys,
+    /// Write the selected PDF paths to the clipboard.
+    CopyPaths,
+    /// Attach the selected papers to the next question. The host does this.
+    Attach,
+    /// Drop the selection. The host does this.
+    Clear,
+}
+
+type ActionHandler = Rc<dyn Fn(ReferenceAction, &[ReferenceEntry], &mut Window, &mut App)>;
+
+/// One floating bar for a multi-selection of references.
+///
+/// The bar writes **Copy @keys** and **Copy paths** itself. **Attach** and
+/// **Clear** are shown only when a host action handler is installed; the host
+/// owns the selection and the chat, so it performs those two actions. Build the
+/// bar from the selected entries in list order and give it a stable parent.
+#[derive(IntoElement)]
+pub struct ReferenceSelectionBar {
+    entries: Vec<ReferenceEntry>,
+    on_action: Option<ActionHandler>,
+}
+
+impl ReferenceSelectionBar {
+    /// A bar for `entries`, which should be the selected rows in list order.
+    pub fn new(entries: impl IntoIterator<Item = ReferenceEntry>) -> Self {
+        Self {
+            entries: entries.into_iter().collect(),
+            on_action: None,
+        }
+    }
+
+    /// Receive every action after its built-in effect.
+    ///
+    /// Copy actions have already updated the clipboard when the handler runs.
+    pub fn on_action(
+        mut self,
+        handler: impl Fn(ReferenceAction, &[ReferenceEntry], &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_action = Some(Rc::new(handler));
+        self
+    }
+}
+
+impl RenderOnce for ReferenceSelectionBar {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.theme();
+        let count = self.entries.len();
+        let path_text = paths_text(&self.entries);
+        let paths_available = !path_text.is_empty();
+        let handler = self.on_action;
+
+        let copy_keys = {
+            let handler = handler.clone();
+            let entries = self.entries.clone();
+            Button::new("reference-bulk-copy-keys")
+                .icon(IconName::AtSign)
+                .xsmall()
+                .ghost()
+                .tooltip("Copy @keys")
+                .on_click(move |_, window, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(keys_text(&entries)));
+                    if let Some(handler) = &handler {
+                        handler(ReferenceAction::CopyKeys, &entries, window, cx);
+                    }
+                })
+        };
+        let copy_paths = {
+            let captured = path_text;
+            let handler = handler.clone();
+            let entries = self.entries.clone();
+            Button::new("reference-bulk-copy-paths")
+                .icon(IconName::FileText)
+                .xsmall()
+                .ghost()
+                .disabled(!paths_available)
+                .tooltip("Copy paths")
+                .on_click(move |_, window, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(captured.clone()));
+                    if let Some(handler) = &handler {
+                        handler(ReferenceAction::CopyPaths, &entries, window, cx);
+                    }
+                })
+        };
+
+        let mut bar = h_flex()
+            .debug_selector(|| "reference-selection-bar".to_owned())
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .rounded_full()
+            .border_1()
+            .border_color(theme.primary.opacity(0.55))
+            .bg(theme.background)
+            .shadow_md()
+            .child(
+                div()
+                    .flex_none()
+                    .px_1()
+                    .text_xs()
+                    .text_color(theme.primary)
+                    .child(format!("{count} selected")),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "reference-bulk-copy-keys-button".to_owned())
+                    .child(copy_keys),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "reference-bulk-copy-paths-button".to_owned())
+                    .child(copy_paths),
+            );
+
+        if handler.is_some() {
+            let attach_handler = handler.clone();
+            let attach_entries = self.entries.clone();
+            bar = bar.child(
+                Button::new("reference-bulk-attach")
+                    .icon(IconName::Paperclip)
+                    .xsmall()
+                    .ghost()
+                    .disabled(!paths_available)
+                    .tooltip("Attach to next question")
+                    .on_click(move |_, window, cx| {
+                        if let Some(handler) = &attach_handler {
+                            handler(ReferenceAction::Attach, &attach_entries, window, cx);
+                        }
+                    }),
+            );
+            let clear_handler = handler.clone();
+            let clear_entries = self.entries.clone();
+            bar = bar.child(
+                Button::new("reference-bulk-clear")
+                    .icon(IconName::X)
+                    .xsmall()
+                    .ghost()
+                    .tooltip("Clear selection")
+                    .on_click(move |_, window, cx| {
+                        if let Some(handler) = &clear_handler {
+                            handler(ReferenceAction::Clear, &clear_entries, window, cx);
+                        }
+                    }),
+            );
+        }
+
+        bar
     }
 }
 
@@ -734,6 +1163,230 @@ mod tests {
         let entries = load_entries(&dir.join("missing.bib"), &dir).expect("entries");
         assert!(entries.is_empty());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn cite_parsers() -> DocumentParsers {
+        DocumentParsers::new(ragrig::build_parsers())
+    }
+
+    fn entry(key: &str, path: Option<PathBuf>) -> ReferenceEntry {
+        ReferenceEntry {
+            key: key.to_owned(),
+            authors: "Kano".to_owned(),
+            year: "2025".to_owned(),
+            title: format!("Title of {key}"),
+            source: String::new(),
+            path,
+        }
+    }
+
+    #[test]
+    fn citations_resolve_recorded_files_and_explain_misses() {
+        let dir = temp_dir("cite");
+        let corpus = dir.join("corpus");
+        std::fs::create_dir_all(&corpus).expect("corpus");
+        let pdf = corpus.join("paper.md");
+        std::fs::write(&pdf, "RECORDED PAPER BODY").expect("paper");
+        let bib = dir.join("references.bib");
+        std::fs::write(
+            &bib,
+            format!(
+                "@article{{Kano2025,\n  author = {{Kano, Fumihiro}},\n  year = {{2025}},\n  title = {{Gaze}},\n  file = {{{}}}\n}}\n",
+                pdf.display()
+            ),
+        )
+        .expect("bib");
+
+        let keys = vec!["kano2025".to_owned(), "Missing2020".to_owned()];
+        let mut state = CiteState::default();
+        let resolution = resolve_citations(
+            &mut state,
+            &bib,
+            std::slice::from_ref(&corpus),
+            &keys,
+            &cite_parsers(),
+        );
+
+        assert_eq!(resolution.resolved, ["Kano2025"]);
+        assert_eq!(resolution.attachments.len(), 1);
+        assert_eq!(resolution.attachments[0].name, "@Kano2025");
+        assert_eq!(resolution.attachments[0].content, "RECORDED PAPER BODY");
+        assert_eq!(resolution.attached[0].path, pdf);
+        assert_eq!(resolution.missed.len(), 1);
+        assert!(resolution.missed[0].contains("Missing2020"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn citation_aliases_share_one_attachment() {
+        let dir = temp_dir("cite-alias");
+        let corpus = dir.join("corpus");
+        std::fs::create_dir_all(&corpus).expect("corpus");
+        let paper = corpus.join("paper.md");
+        std::fs::write(&paper, "SHARED BODY").expect("paper");
+        let bib = dir.join("references.bib");
+        std::fs::write(
+            &bib,
+            format!(
+                "@article{{KeyA, title = {{A}}, file = {{{path}}}}}\n\
+                 @article{{KeyB, title = {{B}}, file = {{{path}}}}}\n",
+                path = paper.display()
+            ),
+        )
+        .expect("bib");
+
+        let keys = vec!["KeyA".to_owned(), "KeyB".to_owned()];
+        let mut state = CiteState::default();
+        let resolution = resolve_citations(
+            &mut state,
+            &bib,
+            std::slice::from_ref(&corpus),
+            &keys,
+            &cite_parsers(),
+        );
+
+        assert_eq!(resolution.resolved, ["KeyA", "KeyB"]);
+        assert_eq!(resolution.attachments.len(), 1);
+        assert_eq!(resolution.attached.len(), 1);
+        assert!(resolution.missed.is_empty());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn citations_cap_at_three_and_truncate_one_document() {
+        let dir = temp_dir("cite-limit");
+        let corpus = dir.join("corpus");
+        std::fs::create_dir_all(&corpus).expect("corpus");
+        let mut bib = String::new();
+        for index in 1..=4 {
+            let path = corpus.join(format!("paper{index}.md"));
+            let body = if index == 1 {
+                "x".repeat(MAX_CITATION_CHARS + 5)
+            } else {
+                format!("body {index}")
+            };
+            std::fs::write(&path, body).expect("paper");
+            bib.push_str(&format!(
+                "@article{{Key{index}, title = {{T{index}}}, file = {{{}}}}}\n",
+                path.display()
+            ));
+        }
+        let bib_path = dir.join("references.bib");
+        std::fs::write(&bib_path, bib).expect("bib");
+
+        let keys = (1..=4)
+            .map(|index| format!("Key{index}"))
+            .collect::<Vec<_>>();
+        let mut state = CiteState::default();
+        let resolution = resolve_citations(
+            &mut state,
+            &bib_path,
+            std::slice::from_ref(&corpus),
+            &keys,
+            &cite_parsers(),
+        );
+
+        assert_eq!(resolution.attachments.len(), MAX_CITATIONS);
+        assert_eq!(
+            resolution.attachments[0].content.chars().count(),
+            MAX_CITATION_CHARS
+        );
+        assert_eq!(resolution.resolved.len(), MAX_CITATIONS);
+        assert_eq!(resolution.missed.len(), 1);
+        assert!(resolution.missed[0].contains("limit"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_keyed_corpus_file_is_citable_without_a_file_field() {
+        let dir = temp_dir("cite-keyed");
+        let corpus = dir.join("corpus");
+        std::fs::create_dir_all(&corpus).expect("corpus");
+        let paper = corpus.join("Kano2025 - Gaze.md");
+        std::fs::write(&paper, "KEYED BODY").expect("paper");
+        let bib = dir.join("references.bib");
+        std::fs::write(&bib, "@article{Kano2025, title = {Gaze}}\n").expect("bib");
+
+        let keys = vec!["kano2025".to_owned()];
+        let mut state = CiteState::default();
+        let resolution = resolve_citations(
+            &mut state,
+            &bib,
+            std::slice::from_ref(&corpus),
+            &keys,
+            &cite_parsers(),
+        );
+
+        assert_eq!(resolution.resolved, ["Kano2025"]);
+        assert_eq!(resolution.attached[0].path, paper);
+        assert_eq!(resolution.attachments[0].content, "KEYED BODY");
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_missing_bibliography_reports_every_key() {
+        let dir = temp_dir("cite-missing-bib");
+        let keys = vec!["One".to_owned(), "Two".to_owned()];
+        let mut state = CiteState::default();
+        let resolution = resolve_citations(
+            &mut state,
+            &dir.join("missing.bib"),
+            std::slice::from_ref(&dir),
+            &keys,
+            &cite_parsers(),
+        );
+
+        assert!(resolution.attachments.is_empty());
+        assert_eq!(resolution.missed.len(), 2);
+        assert!(
+            resolution
+                .missed
+                .iter()
+                .all(|line| line.contains("bibliography"))
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn selection_is_keyed_and_follows_the_list_order() {
+        let entries = vec![entry("B", None), entry("A", None)];
+        let mut selection = ReferenceSelection::default();
+        assert!(selection.insert("A"));
+        assert!(selection.insert("B"));
+        assert_eq!(selection.len(), 2);
+        assert_eq!(
+            selection
+                .entries(&entries)
+                .iter()
+                .map(|entry| entry.key.as_str())
+                .collect::<Vec<_>>(),
+            ["B", "A"]
+        );
+
+        assert!(!selection.toggle("A"));
+        assert_eq!(selection.len(), 1);
+        assert!(selection.toggle("A"));
+
+        selection.retain_existing(&entries[..1]);
+        assert!(selection.contains("B"));
+        assert!(!selection.contains("A"));
+        selection.clear();
+        assert!(selection.is_empty());
+    }
+
+    #[test]
+    fn bulk_text_uses_citation_keys_and_skips_pathless_rows() {
+        let entries = vec![
+            entry("B", Some(PathBuf::from("/tmp/b.pdf"))),
+            entry("A", None),
+        ];
+        assert_eq!(keys_text(&entries), "@B @A");
+        assert_eq!(paths_text(&entries), "/tmp/b.pdf");
     }
 
     #[test]
@@ -861,6 +1514,118 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    struct SelectHost {
+        entry: ReferenceEntry,
+        state: Rc<RefCell<(bool, usize)>>,
+    }
+
+    impl Render for SelectHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let state = Rc::clone(&self.state);
+            let selected = state.borrow().0;
+            div().w(px(420.)).h(px(80.)).child(
+                ReferenceRow::new(0, self.entry.clone())
+                    .selected(selected)
+                    .on_select(move |_, _| {
+                        let mut state = state.borrow_mut();
+                        state.0 = !state.0;
+                        state.1 += 1;
+                    }),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn hovering_reveals_the_plus_and_clicking_toggles_selection(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let state = Rc::new(RefCell::new((false, 0)));
+        let host_state = Rc::clone(&state);
+        let (_, cx) = cx.add_window_view(move |_, _| SelectHost {
+            entry: entry("Kano2025", None),
+            state: host_state,
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        // The slot is laid out in every frame; the pointer makes it visible.
+        assert!(cx.debug_bounds("reference-select-0").is_some());
+        cx.simulate_mouse_move(point(px(200.), px(30.)), None, Modifiers::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let plus = cx
+            .debug_bounds("reference-select-0")
+            .expect("selection toggle bounds");
+        cx.simulate_click(plus.center(), Modifiers::default());
+        assert_eq!(*state.borrow(), (true, 1));
+
+        cx.simulate_click(plus.center(), Modifiers::default());
+        assert_eq!(*state.borrow(), (false, 2));
+    }
+
+    struct BarHost {
+        entries: Vec<ReferenceEntry>,
+        actions: Rc<RefCell<Vec<ReferenceAction>>>,
+    }
+
+    impl Render for BarHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let actions = Rc::clone(&self.actions);
+            div().w(px(420.)).h(px(60.)).child(
+                ReferenceSelectionBar::new(self.entries.clone()).on_action(
+                    move |action, entries, _, _| {
+                        actions.borrow_mut().push(action);
+                        assert!(!entries.is_empty());
+                    },
+                ),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn the_selection_bar_copies_keys_and_paths(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let dir = temp_dir("bar");
+        let pdf = dir.join("paper.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4").expect("pdf");
+        let expected_path = pdf.display().to_string();
+        let actions = Rc::new(RefCell::new(Vec::new()));
+        let host_actions = Rc::clone(&actions);
+        let (_, cx) = cx.add_window_view(move |_, _| BarHost {
+            entries: vec![entry("B", Some(pdf.clone())), entry("A", None)],
+            actions: host_actions,
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let keys = cx
+            .debug_bounds("reference-bulk-copy-keys-button")
+            .expect("copy keys bounds");
+        cx.simulate_click(keys.center(), Modifiers::default());
+        assert_eq!(
+            cx.read_from_clipboard()
+                .expect("clipboard")
+                .text()
+                .as_deref(),
+            Some("@B @A")
+        );
+
+        let paths = cx
+            .debug_bounds("reference-bulk-copy-paths-button")
+            .expect("copy paths bounds");
+        cx.simulate_click(paths.center(), Modifiers::default());
+        assert_eq!(
+            cx.read_from_clipboard()
+                .expect("clipboard")
+                .text()
+                .as_deref(),
+            Some(expected_path.as_str())
+        );
+        assert_eq!(
+            actions.borrow().as_slice(),
+            [ReferenceAction::CopyKeys, ReferenceAction::CopyPaths]
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test]
     #[ignore = "requires a running GROBID server and test_library PDFs"]
     async fn grobid_extracts_the_test_library_end_to_end() {
@@ -908,6 +1673,22 @@ mod tests {
                 .iter()
                 .all(|entry| entry.path.as_ref().is_some_and(|path| path.is_file()))
         );
+
+        // The rows must also be citable: the `file` links written by the
+        // pre-pass resolve, and the real PDF parser returns text.
+        let keys = vec![entries[0].key.clone()];
+        let mut state = CiteState::default();
+        let parsers = DocumentParsers::new(ragrig::build_parsers());
+        let resolution = resolve_citations(
+            &mut state,
+            &bibliography,
+            std::slice::from_ref(&corpus),
+            &keys,
+            &parsers,
+        );
+        assert_eq!(resolution.resolved, keys);
+        assert_eq!(resolution.attachments.len(), 1);
+        assert!(!resolution.attachments[0].content.trim().is_empty());
 
         let _ = std::fs::remove_dir_all(dir);
     }

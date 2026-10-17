@@ -419,11 +419,51 @@ Findings:
   `ChunksExt` trait, hence the direct (optional) `biblatex` dependency.
 - GROBID links absolute paths in this setup; relative paths are resolved
   against the scanned corpus, with a keyed-filename fallback.
-- Not ported: inline `@key` resolution/attachment to the prompt. M4 ships the
-  copy actions; pasting the copied key into a question is the current path.
-  The deprecated arXiv/Semantic Scholar discovery remains out.
+- Inline `@key` resolution was deferred to M5; the deprecated arXiv/Semantic
+  Scholar discovery remains out.
 
-### M5 — Hardening and publication (3–5 days)
+### M5 — Roundtrip Experience (done, 2026-10-17)
+
+Delivered at the user's request before M3. The version stays at 0.2.0;
+0.3.0 remains the next planned bump after M3.
+
+- **Inline citations.** `grobid-bibtex`'s `cite_keys` scans the question; the
+  worker resolves keys against `<workspace>/.ragrig/references.bib` and the
+  active corpus folders. The recorded `file` field wins, then a keyed file
+  name, quoted aliases resolve to the canonical key, and misses never abort
+  the question. Up to 3 papers per query, 100,000 characters each; a document
+  cited by two aliases is attached once.
+- The worker caches a `CiteState` across questions (the upstream type refreshes
+  itself when the bibliography's size or mtime changes). Resolution runs on
+  Tokio's blocking pool before generation, so no PDF parsing touches GPUI.
+- `RagEvent::Citations` carries the attached keys and miss lines. `RagChat`
+  inserts a system note *before* the assistant placeholder, giving the
+  Sciscraper order: question, `Attached: @Key`, then the streaming answer.
+- `RagSettings::resolve_citations` (default **on**) is exposed as **Use @key
+  citations** in Settings → References and threaded through `RagSetup`.
+- A folder parsed with GROBID joins the citation corpora even when it was not
+  indexed, so references extracted from a folder are immediately citable.
+- **Multi-select.** `ReferenceSelection` stores keys, not indices, so a
+  refreshed list keeps the selection and drops vanished rows.
+  `ReferenceRow::on_select` adds the large leading **+** (revealed on hover,
+  replaced by a check when selected, tinted row background).
+- `ReferenceSelectionBar` is one floating pill for the list: selected count,
+  **Copy @keys**, **Copy paths**, **Attach to next question** and **Clear**.
+  The demo mounts it in the Library panel footer, where it stays visible while
+  the list scrolls. Copy actions write the clipboard; attach and clear are
+  reported to the host, which owns the chat and selection.
+- 62 active library tests, including citation resolution (recorded file,
+  keyed fallback, aliases, cap, truncation, missing bibliography), a worker
+  roundtrip that proves the attached text reaches the prompt, and GPUI tests
+  for the hover **+**, toggling, and both bulk clipboard actions.
+
+Acceptance: with the running GROBID server, the ignored end-to-end test
+produced the three test-library records and resolved the first key through the
+real PDF parser. In the demo, a question containing `@Kano2025` showed
+`Attached: @Kano2025` above the answer and the status line reported the
+attached paper.
+
+### M6 — Hardening and publication (3–5 days)
 
 - Accessibility: labels for icon buttons, focus order, log role,
   reduced-motion busy pulse.
@@ -451,6 +491,7 @@ Findings:
 | D8 | **`DockArea`** for the demo because Sciscraper will use tabs. |
 | D9 | **Secrets from the environment only** (`DEEPSEEK_API_KEY`); never persisted. |
 | D10 | **M4 is GROBID/BibTeX only**; arXiv and Semantic Scholar are deprecated. GROBID logic comes from `grobid-bibtex`. |
+| D11 | **M5 is Roundtrip Experience** — `@key` prompt attachment and reference multi-select. Hardening/publication moved to M6. |
 
 Defaults carried into M1: `MessageScroller` + incremental Markdown,
 keep partial answers on stop, `Settings` pages, Lucide via
@@ -540,8 +581,9 @@ crate: it changes the backend for the whole dependency graph.
 
 ## 11. Next implementation step
 
-M3: deepen the library. Corpora list with enable/remove/sync/rebuild/purge,
-per-document chunk counts and actions, drag/drop paths, attach a library
-document (already wired in the M2 demo), pending/change detection, and dock
-layout persistence in `.ragrig/gpui.json`. Apply the same worker protocol;
-do not move Ragrig futures onto GPUI's executor.
+M3 remains the open functional milestone: deepen the library with
+enable/remove/sync/rebuild/purge, per-document chunk counts and actions,
+drag/drop paths, pending/change detection, and dock layout persistence in
+`.ragrig/gpui.json`. After that, M6 is the hardening and publication pass.
+Apply the same worker protocol; do not move Ragrig futures onto GPUI's
+executor.

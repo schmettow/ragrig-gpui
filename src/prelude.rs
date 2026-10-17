@@ -22,6 +22,7 @@ pub use crate::rag::{
 
 #[cfg(feature = "grobid")]
 pub use crate::references::{
-    ReferenceCopy, ReferenceEntry, ReferenceOptions, ReferenceProgress, ReferenceReport,
-    ReferenceRow, ReferenceStage,
+    CitationAttachment, ReferenceAction, ReferenceCopy, ReferenceEntry, ReferenceOptions,
+    ReferenceProgress, ReferenceReport, ReferenceRow, ReferenceSelection, ReferenceSelectionBar,
+    ReferenceStage, keys_text, paths_text,
 };

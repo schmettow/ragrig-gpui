@@ -1,4 +1,5 @@
-//! M2 demo: a configurable Ragrig chat with library and session management.
+//! Ragrig GPUI demo: a configurable chat with library, sessions, references,
+//! `@key` citations, and reference multi-select.
 //!
 //! This is the RAG half of Sciscraper without the editor. It uses the
 //! reusable `ragrig-gpui` components and talks to a real Ragrig agent.
@@ -48,6 +49,8 @@ struct RagAppState {
     controller: Entity<RagController>,
     chat: Entity<RagChat>,
     corpus_path: Entity<InputState>,
+    #[cfg(feature = "grobid")]
+    selected: ReferenceSelection,
     status: SharedString,
 }
 
@@ -92,6 +95,8 @@ impl RagAppState {
             controller,
             chat,
             corpus_path,
+            #[cfg(feature = "grobid")]
+            selected: ReferenceSelection::default(),
             status: "Ready. Configure the workspace and models, then index a folder.".into(),
         };
 
@@ -145,7 +150,14 @@ impl RagAppState {
                 RagEvent::ReferencesFailed { message, .. } => this.set_status(message.clone(), cx),
                 #[cfg(feature = "grobid")]
                 RagEvent::ReferencesLoaded { entries, .. } => {
+                    this.selected.retain_existing(entries);
                     this.set_status(format!("{} references", entries.len()), cx)
+                }
+                #[cfg(feature = "grobid")]
+                RagEvent::Citations { resolved, .. } if !resolved.is_empty() => {
+                    let count = resolved.len();
+                    let noun = if count == 1 { "paper" } else { "papers" };
+                    this.set_status(format!("Attached {count} cited {noun}"), cx)
                 }
                 _ => {}
             },
@@ -492,6 +504,8 @@ impl Render for LibraryPanel {
             )
         };
         let corpora = settings.read(cx).corpus_dirs.clone();
+        #[cfg_attr(not(feature = "grobid"), allow(unused_mut))]
+        let mut selection_footer: Option<AnyElement> = None;
 
         let index_state = self.state.clone();
         let index = Button::new("ragchat-index-body")
@@ -678,6 +692,13 @@ impl Render for LibraryPanel {
                 )
             };
 
+            let selected_keys = self.state.read(cx).selected.clone();
+            let selected_entries: Vec<ReferenceEntry> = selected_keys
+                .entries(&references)
+                .into_iter()
+                .cloned()
+                .collect();
+
             let parse_state = self.state.clone();
             let parse = Button::new("ragchat-grobid-parse")
                 .label("GROBID")
@@ -744,19 +765,82 @@ impl Render for LibraryPanel {
                 ));
             } else {
                 for (index, entry) in references.into_iter().enumerate() {
-                    let state = self.state.clone();
-                    body =
-                        body.child(ReferenceRow::new(index, entry).on_copy(move |copy, _, cx| {
-                            state.update(cx, |state, cx| match copy {
-                                ReferenceCopy::Key(key) => {
-                                    state.set_status(format!("Copied @{key}"), cx)
-                                }
-                                ReferenceCopy::Path(path) => {
-                                    state.set_status(format!("Copied {}", path.display()), cx)
-                                }
-                            });
-                        }));
+                    let key = entry.key.clone();
+                    let is_selected = selected_keys.contains(&key);
+                    let copy_state = self.state.clone();
+                    let select_state = self.state.clone();
+                    body = body.child(
+                        ReferenceRow::new(index, entry)
+                            .selected(is_selected)
+                            .on_copy(move |copy, _, cx| {
+                                copy_state.update(cx, |state, cx| match copy {
+                                    ReferenceCopy::Key(key) => {
+                                        state.set_status(format!("Copied @{key}"), cx)
+                                    }
+                                    ReferenceCopy::Path(path) => {
+                                        state.set_status(format!("Copied {}", path.display()), cx)
+                                    }
+                                });
+                            })
+                            .on_select(move |_, cx| {
+                                let key = key.clone();
+                                select_state.update(cx, |state, cx| {
+                                    state.selected.toggle(key);
+                                    cx.notify();
+                                });
+                            }),
+                    );
                 }
+            }
+
+            if !selected_entries.is_empty() {
+                let action_state = self.state.clone();
+                let action_chat = self.state.read(cx).chat.clone();
+                selection_footer = Some(
+                    ReferenceSelectionBar::new(selected_entries)
+                        .on_action(move |action, entries, _, cx| match action {
+                            ReferenceAction::CopyKeys => action_state.update(cx, |state, cx| {
+                                let count = entries.len();
+                                state.set_status(format!("Copied {count} @keys"), cx);
+                            }),
+                            ReferenceAction::CopyPaths => action_state.update(cx, |state, cx| {
+                                let count =
+                                    entries.iter().filter(|entry| entry.path.is_some()).count();
+                                let noun = if count == 1 { "path" } else { "paths" };
+                                state.set_status(format!("Copied {count} {noun}"), cx);
+                            }),
+                            ReferenceAction::Attach => {
+                                let mut attached = 0;
+                                for entry in entries {
+                                    let Some(path) = &entry.path else {
+                                        continue;
+                                    };
+                                    let label = format!("@{}", entry.key);
+                                    action_chat.update(cx, |chat, cx| {
+                                        chat.attach_file(label.clone(), path.clone(), cx);
+                                    });
+                                    attached += 1;
+                                }
+                                action_state.update(cx, |state, cx| {
+                                    state.selected.clear();
+                                    let noun = if attached == 1 {
+                                        "reference"
+                                    } else {
+                                        "references"
+                                    };
+                                    state.set_status(
+                                        format!("Attached {attached} {noun} to the next question"),
+                                        cx,
+                                    );
+                                });
+                            }
+                            ReferenceAction::Clear => action_state.update(cx, |state, cx| {
+                                state.selected.clear();
+                                cx.notify();
+                            }),
+                        })
+                        .into_any_element(),
+                );
             }
         }
 
@@ -777,10 +861,9 @@ impl Render for LibraryPanel {
                     .child(index),
             )
             .child(body)
-            .footer(muted(
-                "Indexing is incremental: unchanged files are skipped.",
-                cx,
-            ))
+            .footer(selection_footer.unwrap_or_else(|| {
+                muted("Indexing is incremental: unchanged files are skipped.", cx)
+            }))
     }
 }
 
@@ -1217,7 +1300,7 @@ fn main() {
             let options = WindowOptions {
                 window_bounds: Some(gpui_kit::WindowBounds::Windowed(restore)),
                 titlebar: Some(gpui_kit::TitlebarOptions {
-                    title: Some("ragrig-gpui — M2 RAG chat".into()),
+                    title: Some("ragrig-gpui — RAG chat".into()),
                     ..Default::default()
                 }),
                 ..Default::default()

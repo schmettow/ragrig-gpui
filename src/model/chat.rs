@@ -343,6 +343,30 @@ impl ChatState {
         id
     }
 
+    /// Insert a message immediately before `before`.
+    ///
+    /// Returns `None` when `before` is unknown; the transcript is unchanged in
+    /// that case.
+    pub fn insert_before(&mut self, before: MessageId, message: NewMessage) -> Option<MessageId> {
+        let index = self
+            .messages
+            .iter()
+            .position(|candidate| candidate.id == before)?;
+        let id = MessageId(self.next_id);
+        self.next_id += 1;
+        self.messages.insert(
+            index,
+            ChatMessage {
+                id,
+                role: message.role,
+                text: message.text,
+                state: message.state,
+                meta: message.meta,
+            },
+        );
+        Some(id)
+    }
+
     /// Append a complete user message.
     pub fn push_user(&mut self, text: impl Into<String>) -> MessageId {
         self.push(NewMessage::user(text))
@@ -545,6 +569,35 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![first, third]
         );
+    }
+
+    #[test]
+    fn inserting_before_keeps_the_transcript_order() {
+        let mut state = ChatState::default();
+        let user = state.push_user("question");
+        let assistant = state.begin_assistant();
+
+        let note = state
+            .insert_before(assistant, NewMessage::system("Attached: @Kano2025"))
+            .expect("insert before the assistant");
+        assert!(note > assistant);
+        assert_eq!(
+            state
+                .messages()
+                .iter()
+                .map(ChatMessage::role)
+                .collect::<Vec<_>>(),
+            vec![ChatRole::User, ChatRole::System, ChatRole::Assistant]
+        );
+        assert_eq!(state.messages()[0].id(), user);
+        assert_eq!(state.messages()[2].id(), assistant);
+
+        assert!(
+            state
+                .insert_before(MessageId(999), NewMessage::system("late"))
+                .is_none()
+        );
+        assert_eq!(state.len(), 3);
     }
 
     #[test]

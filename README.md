@@ -6,10 +6,12 @@ status, a full settings page, and a dedicated Tokio controller. The crate has
 no editor; Sciscraper and other hosts compose these pieces into their own
 layout.
 
-Status: **M2 (RAG chat) and M4 (GROBID references) complete** — controller,
-RAG chat demo, sessions, library ingestion, settings, and reference rows with
-hover copy actions. The public API may still change before 1.0. See
-[`PLAN.md`](PLAN.md) for milestones, decisions, and measured results.
+Status: **M2 (RAG chat), M4 (GROBID references), and M5 (roundtrip
+experience) complete** — controller, RAG chat demo, sessions, library
+ingestion, settings, reference rows with hover copy actions, `@key` citation
+attachment, and multi-select bulk actions. The public API may still change
+before 1.0. See [`PLAN.md`](PLAN.md) for milestones, decisions, and measured
+results.
 
 ## Quick start
 
@@ -29,7 +31,7 @@ sudo apt install libxkbcommon-dev libxkbcommon-x11-dev
 - Alternatively set `DEEPSEEK_API_KEY` and select DeepSeek in Settings. Keys
   are read from the environment only and never persisted.
 
-Run the M2 demo from this crate's directory:
+Run the demo from this crate's directory:
 
 ```sh
 RAGRIG_WORKSPACE=/tmp/ragrig-demo \
@@ -54,8 +56,9 @@ References** if you want the PDFs renamed to `Key - Authors - Title - Year`.
 a folder on startup; `RAGRIG_MODEL` and `RAGRIG_EMBED_MODEL` override the
 settings defaults; `RAGRIG_ASK` submits a first question after the window
 opens (use it with an already indexed workspace, because indexing and asking
-are serialised); `RAGRIG_GROBID=1` parses references on startup when the
-`grobid` feature is enabled.
+are serialised); include an `@Key` in that question to exercise citation
+attachment; `RAGRIG_GROBID=1` parses references on startup when the `grobid`
+feature is enabled.
 
 Or select the manifest explicitly from anywhere:
 
@@ -73,17 +76,22 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
   chunks appear. Indexing is incremental and can be stopped.
 - **References** (Library, with `--features grobid`): press **GROBID** to parse
   the folder's PDFs. Rows show `@key`, authors, year, and title. Hover a row
-  for **Copy @key** and **Copy path**; a row without a PDF explains why the
-  path button is disabled. The last-run report shows parsed, cached, merged,
+  for a leading **+** and **Copy @key** / **Copy path**; a row without a PDF
+  explains why the path button is disabled. Select any number of rows and one
+  floating bar appears with **Copy @keys**, **Copy paths**, **Attach to next
+  question**, and **Clear**. The last-run report shows parsed, cached, merged,
   and duplicate counts.
 - Click the paperclip on a document row to attach it to the next question.
-- **Chat** (center): ask a question. Tokens stream, the footer reports chunks,
-  sources, tokens, and elapsed time. **Stop** keeps the partial answer; retry a
-  failed answer with the last prompt.
+- **Chat** (center): ask a question. Write `@Kano2025` (or any key shown in the
+  bibliography) and the paper is parsed and attached as one-shot context; a
+  note above the answer lists the attached keys and any misses. Tokens stream,
+  the footer reports chunks, sources, tokens, and elapsed time. **Stop** keeps
+  the partial answer; retry a failed answer with the last prompt.
 - **Sessions** (left dock): new, load, and refresh saved conversations. Apply
   in Settings rebuilds the agent and reloads the current saved session.
 - **Settings** (right dock): workspace, provider, models, generation, prompt,
-  embeddings, retrieval, PDF backend, chunking, and memory. **Apply** validates
+  embeddings, retrieval, PDF backend, chunking, memory, and (with `grobid`)
+  GROBID extraction plus the **Use @key citations** switch. **Apply** validates
   and rebuilds. **Profiles** save/load JSON under `.ragrig/profiles`.
 - **Components** (right dock): live Ragrig pipeline status.
 - Chat with an empty library; Ragrig falls back to pure chat.
@@ -105,7 +113,7 @@ cargo run --example spike --no-default-features
 | Feature | Default | Purpose |
 |---|---|---|
 | `ragrig` | yes | `RagController`, `RagChat`, `RagSettings`, Tokio worker |
-| `grobid` | no | GROBID/BibTeX extraction, reference rows, hover copy actions |
+| `grobid` | no | GROBID/BibTeX extraction, reference rows, `@key` citations, multi-select bulk actions |
 
 arXiv and Semantic Scholar discovery are deprecated and will not be ported.
 
@@ -130,7 +138,10 @@ ragrig-gpui
 - `RagChat::new(window, cx, controller)` wires the M1 primitives and re-emits
   `RagChatEvent`s for status, source clicks, and copy.
 - `RagSettings::to_setup()` validates and converts to `RagrigConfig` plus a
-  prompt override and stream flag.
+  prompt override, stream flag, and `@key` citation switch.
+- The worker caches a `CiteState` for the workspace bibliography and resolves
+  citations on its blocking pool before generation. A folder parsed with
+  GROBID joins the citation corpora even when it was not indexed.
 - `rag_settings(id, settings, controller, cx)` builds the complete page;
   Apply is explicit.
 
@@ -144,10 +155,11 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 50 active library tests (including six actor tests with a fake
-generator and embedder, and a GPUI hover/clipboard test), 2 gallery tests, 5
-active spike tests plus one ignored typing benchmark, and 2 doctests. One
-GROBID end-to-end test is ignored by default:
+Current suite: 62 active library tests (including seven actor tests with a fake
+generator and embedder, citation-resolution tests, and GPUI hover, selection
+and bulk-clipboard tests), 2 gallery tests, 5 active spike tests plus one
+ignored typing benchmark, and 2 doctests. One GROBID end-to-end test is
+ignored by default:
 
 ```sh
 cargo test --all-features grobid_extracts_the_test_library_end_to_end \
@@ -155,8 +167,9 @@ cargo test --all-features grobid_extracts_the_test_library_end_to_end \
 ```
 
 It copies the PDFs from `test_library/` to a temporary corpus, parses them
-with the running GROBID server, renames them, merges the bibliography, and
-checks every row's PDF path. It needs `http://localhost:8070`.
+with the running GROBID server, renames them, merges the bibliography, checks
+every row's PDF path, and resolves one key through the real PDF parser. It
+needs `http://localhost:8070`.
 
 On a machine without the xkbcommon development packages, linking fails even
 though the Rust crates compile. Install the packages above; do not paper over
@@ -187,6 +200,14 @@ the link error in CI.
   `<workspace>/.ragrig/references.bib`; the demo resolves rows' PDFs against
   the selected corpus. Rename and OpenAlex completion are opt-in because both
   change files or call the network.
+- `@key` resolution is capped at 3 papers per question and 100,000 characters
+  per paper, mirroring Sciscraper. Citing the same file through two aliases
+  counts both keys as resolved but attaches the document once. Misses never
+  abort the question; they appear in the transcript note.
+- `ReferenceSelection` is keyed by citation key, so a refreshed list keeps the
+  selection. `ReferenceRow::on_select` adds the leading **+**;
+  `ReferenceSelectionBar` performs the bulk copy actions and reports
+  **Attach** / **Clear** to the host, which owns the chat and the selection.
 - The checked-in `Cargo.lock` is intentional: `gpui-kit 0.7.3`'s optional
   `gpui-fast` branch pins `cocoa =0.26.0`, while a pre-existing lockfile may
   hold `0.26.1`. A fresh resolve succeeds; a stale one fails.

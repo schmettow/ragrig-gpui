@@ -52,8 +52,9 @@ pub use model::*;
 pub use rag::*;
 #[cfg(feature = "grobid")]
 pub use references::{
-    ReferenceCopy, ReferenceEntry, ReferenceOptions, ReferenceProgress, ReferenceReport,
-    ReferenceRow, ReferenceStage,
+    CitationAttachment, ReferenceAction, ReferenceCopy, ReferenceEntry, ReferenceOptions,
+    ReferenceProgress, ReferenceReport, ReferenceRow, ReferenceSelection, ReferenceSelectionBar,
+    ReferenceStage, keys_text, paths_text,
 };
 pub use session_picker::{SessionPicker, SessionPickerEvent};
 pub use settings::{chat_settings, chat_settings_page};

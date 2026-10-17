@@ -126,6 +126,9 @@ pub struct RagSetup {
     pub system_prompt: Option<String>,
     /// Whether answers stream token by token.
     pub stream: bool,
+    /// Whether `@key` mentions in a question attach the paper as one-shot
+    /// context. On by default.
+    pub resolve_citations: bool,
 }
 
 impl RagSetup {
@@ -135,6 +138,7 @@ impl RagSetup {
             config,
             system_prompt: None,
             stream: true,
+            resolve_citations: true,
         }
     }
 
@@ -144,6 +148,7 @@ impl RagSetup {
             config,
             system_prompt: Some(prompt.into()),
             stream: true,
+            resolve_citations: true,
         }
     }
 }
@@ -202,6 +207,8 @@ pub struct RagSettings {
     pub rename_pdfs: bool,
     /// Complete extracted references against OpenAlex.
     pub openalex: bool,
+    /// Attach `@key` papers mentioned in a question as one-shot context.
+    pub resolve_citations: bool,
     /// Named folder corpora in `name=path` form.
     pub corpus_dirs: Vec<String>,
     /// Profile name typed by the user.
@@ -278,6 +285,7 @@ impl RagSettings {
             grobid_url: "http://localhost:8070".to_owned(),
             rename_pdfs: false,
             openalex: false,
+            resolve_citations: true,
             corpus_dirs: config.corpus_dirs.clone(),
             profile_name: String::new(),
             profiles: Vec::new(),
@@ -369,6 +377,7 @@ impl RagSettings {
             RagSetup::with_system_prompt(config, prompt)
         };
         setup.stream = self.stream;
+        setup.resolve_citations = self.resolve_citations;
         Ok(setup)
     }
 
@@ -560,6 +569,11 @@ mod tests {
         assert_eq!(setup.config.parse.chunk_size, 1024);
         assert_eq!(setup.config.parse.chunk_overlap, 128);
         assert!(setup.system_prompt.is_some());
+        assert!(setup.resolve_citations);
+
+        let mut settings = fixture();
+        settings.resolve_citations = false;
+        assert!(!settings.to_setup().expect("valid setup").resolve_citations);
     }
 
     #[test]

@@ -214,6 +214,12 @@ pub fn rag_settings_page(
         |settings| settings.openalex,
         |settings, value| settings.openalex = value,
     );
+    #[cfg(feature = "grobid")]
+    let resolve_citations = switch_field(
+        &settings,
+        |settings| settings.resolve_citations,
+        |settings, value| settings.resolve_citations = value,
+    );
 
     let profile_name = input_field(
         &settings,
@@ -334,6 +340,10 @@ pub fn rag_settings_page(
                 .item(
                     SettingItem::new("OpenAlex completion", openalex)
                         .description("Fill missing DOI and venue data from OpenAlex."),
+                )
+                .item(
+                    SettingItem::new("Use @key citations", resolve_citations)
+                        .description("Parse @key papers in a question and attach them as context."),
                 )
                 .footer(|_, cx| {
                     div()

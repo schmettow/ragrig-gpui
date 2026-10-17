@@ -12,6 +12,8 @@ use gpui_kit::{
     SharedString, Styled as _, Window, component::v_flex, div, prelude::FluentBuilder as _, px,
 };
 
+#[cfg(feature = "grobid")]
+use crate::references::CitationAttachment;
 use crate::{
     attachments::{AttachmentEvent, AttachmentRows},
     chat_view::{ChatView, ChatViewEvent, EmptyState},
@@ -368,6 +370,20 @@ impl RagChat {
                 cx.emit(RagChatEvent::Status(message.into()));
             }
             #[cfg(feature = "grobid")]
+            RagEvent::Citations { resolved, missed } => {
+                if let Some(note) = citation_note(&resolved, &missed) {
+                    let before = self.pending.as_ref().map(|pending| pending.message);
+                    self.chat.update(cx, |chat, cx| {
+                        let inserted = before.is_some_and(|before| {
+                            chat.push_system_before(before, note.clone(), cx)
+                        });
+                        if !inserted {
+                            chat.push_system(note, cx);
+                        }
+                    });
+                }
+            }
+            #[cfg(feature = "grobid")]
             RagEvent::ReferencesStarted { .. } | RagEvent::ReferencesLoaded { .. } => {}
             #[cfg(feature = "grobid")]
             RagEvent::ReferencesProgress { progress, .. } => {
@@ -437,6 +453,24 @@ impl Render for RagChat {
 }
 
 impl EventEmitter<RagChatEvent> for RagChat {}
+
+#[cfg(feature = "grobid")]
+fn citation_note(resolved: &[CitationAttachment], missed: &[String]) -> Option<String> {
+    if resolved.is_empty() && missed.is_empty() {
+        return None;
+    }
+    let mut lines = Vec::with_capacity(missed.len() + 1);
+    if !resolved.is_empty() {
+        let keys = resolved
+            .iter()
+            .map(|attachment| format!("@{}", attachment.key))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("Attached: {keys}"));
+    }
+    lines.extend(missed.iter().cloned());
+    Some(lines.join("\n"))
+}
 
 fn reply_meta(reply: &RagReply, streamed_tokens: usize) -> MessageMeta {
     let tokens = streamed_tokens.max(reply.answer.split_whitespace().count());

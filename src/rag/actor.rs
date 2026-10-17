@@ -18,7 +18,6 @@ use std::{
 };
 
 use async_channel::{Receiver, Sender, TrySendError};
-#[cfg(feature = "grobid")]
 use ragrig::progress::Cancel as _;
 use ragrig::{
     Cancelled, ChatAgentSpec, ChunkConfig, DocumentParsers, EmbedderSpec, FolderCorpus,
@@ -35,8 +34,11 @@ use ragrig::{
 use crate::model::SourceRef;
 #[cfg(feature = "grobid")]
 use crate::references::{
-    self, ExtractionError, ExtractionObserver, ReferenceOptions, ReferenceProgress,
+    self, CitationResolution, ExtractionError, ExtractionObserver, ReferenceOptions,
+    ReferenceProgress,
 };
+#[cfg(feature = "grobid")]
+use grobid_bibtex::cite::CiteState;
 
 use super::{
     AgentInfo, AttachmentSource, IngestPhase, IngestProgress, LibraryDocument, LibrarySnapshot,
@@ -64,6 +66,9 @@ struct Shared {
     syncing: AtomicBool,
     #[cfg(feature = "grobid")]
     referencing: AtomicBool,
+    /// Bibliography view cached across questions; invalidated by file changes.
+    #[cfg(feature = "grobid")]
+    citations: Mutex<CiteState>,
 }
 
 /// Start the worker thread.
@@ -115,6 +120,8 @@ async fn run(
         syncing: AtomicBool::new(false),
         #[cfg(feature = "grobid")]
         referencing: AtomicBool::new(false),
+        #[cfg(feature = "grobid")]
+        citations: Mutex::new(CiteState::default()),
     });
 
     if shared.session.lock().await.is_none() {
@@ -268,6 +275,7 @@ async fn handle(command: RagCommand, shared: Arc<Shared>, events: Sender<RagEven
                     .await;
                 return;
             }
+            remember_citation_folder(&shared, &folder);
             let cancel = CancellationToken::new();
             shared
                 .cancels
@@ -284,6 +292,7 @@ async fn handle(command: RagCommand, shared: Arc<Shared>, events: Sender<RagEven
         }
         #[cfg(feature = "grobid")]
         RagCommand::RefreshReferences { folder } => {
+            remember_citation_folder(&shared, &folder);
             let bibliography = bibliography_path(&shared);
             match references::load_entries(&bibliography, &folder) {
                 Ok(entries) => {
@@ -515,11 +524,44 @@ async fn run_ask(
         return;
     }
 
+    #[cfg(feature = "grobid")]
+    let citation_documents = {
+        let CitationResolution {
+            attachments,
+            resolved,
+            attached,
+            missed,
+        } = resolve_query_citations(&shared, &prompt).await;
+        if !resolved.is_empty() || !missed.is_empty() {
+            let _ = events
+                .send(RagEvent::Citations {
+                    resolved: attached,
+                    missed,
+                })
+                .await;
+        }
+        attachments
+    };
+    #[cfg(not(feature = "grobid"))]
+    let citation_documents: Vec<AttachedDocument> = Vec::new();
+
+    if cancel.is_cancelled() {
+        let _ = events
+            .send(RagEvent::Stopped {
+                id,
+                partial: String::new(),
+            })
+            .await;
+        finish_ask(&shared, id);
+        return;
+    }
+
     let parsers = {
         let setup = shared.setup.lock().expect("setup");
         DocumentParsers::new(filtered_parsers(&setup.config.parse))
     };
-    let mut documents = Vec::with_capacity(attachments.len());
+    let mut documents = citation_documents;
+    documents.reserve(attachments.len());
     for attachment in &attachments {
         match resolve_attachment(&parsers, attachment) {
             Ok(document) => documents.push(document),
@@ -790,6 +832,57 @@ async fn run_sync(
 fn finish_sync(shared: &Arc<Shared>, id: RequestId) {
     shared.syncing.store(false, Ordering::Release);
     shared.cancels.lock().expect("cancel map").remove(&id);
+}
+
+#[cfg(feature = "grobid")]
+fn remember_citation_folder(shared: &Shared, folder: &Path) {
+    // A folder parsed for references is citable even when it was not indexed
+    // into the vector store. The synthetic name never matches a stored corpus,
+    // so the library listing is unaffected.
+    shared.corpora.lock().expect("corpus map").insert(
+        format!("references:{}", folder.display()),
+        folder.to_path_buf(),
+    );
+}
+
+#[cfg(feature = "grobid")]
+async fn resolve_query_citations(shared: &Arc<Shared>, prompt: &str) -> CitationResolution {
+    let keys = grobid_bibtex::cite::cite_keys(prompt);
+    if keys.is_empty() {
+        return CitationResolution::default();
+    }
+    let setup = {
+        let setup = shared.setup.lock().expect("setup");
+        if !setup.resolve_citations {
+            return CitationResolution::default();
+        }
+        setup.clone()
+    };
+    let bibliography = bibliography_path(shared);
+    let shared = Arc::clone(shared);
+    match tokio::task::spawn_blocking(move || {
+        let corpora: Vec<PathBuf> = shared
+            .corpora
+            .lock()
+            .expect("corpus map")
+            .values()
+            .cloned()
+            .collect();
+        let parsers = DocumentParsers::new(filtered_parsers(&setup.config.parse));
+        let mut state = shared.citations.lock().expect("citation state");
+        references::resolve_citations(&mut state, &bibliography, &corpora, &keys, &parsers)
+    })
+    .await
+    {
+        Ok(resolution) => resolution,
+        Err(error) => {
+            trace(format!("citation resolution failed: {error}"));
+            CitationResolution {
+                missed: vec![format!("@key citations could not be resolved: {error}")],
+                ..CitationResolution::default()
+            }
+        }
+    }
 }
 
 #[cfg(feature = "grobid")]
@@ -1236,10 +1329,20 @@ mod tests {
         Receiver<RagEvent>,
         thread::JoinHandle<()>,
     ) {
+        spawn_with(setup(workspace), session)
+    }
+
+    fn spawn_with(
+        setup: RagSetup,
+        session: AgentSession,
+    ) -> (
+        Sender<RagCommand>,
+        Receiver<RagEvent>,
+        thread::JoinHandle<()>,
+    ) {
         let (commands, command_rx) = async_channel::unbounded();
         let (events, event_rx) = async_channel::unbounded();
-        let handle =
-            start(setup(workspace), Some(session), command_rx, events).expect("start worker");
+        let handle = start(setup, Some(session), command_rx, events).expect("start worker");
         (commands, event_rx, handle)
     }
 
@@ -1505,6 +1608,58 @@ mod tests {
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[0].text, "keep this turn");
         assert_eq!(turns[1].text, FAKE_ANSWER);
+
+        commands.close();
+        handle.join().expect("worker thread");
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[cfg(feature = "grobid")]
+    #[tokio::test]
+    async fn citations_attach_the_paper_and_reach_the_prompt() {
+        let workspace = temp_workspace("cite");
+        let corpus = workspace.join("papers");
+        std::fs::create_dir_all(&corpus).expect("corpus");
+        let paper = corpus.join("Kano2025.md");
+        std::fs::write(&paper, "CITED PAPER BODY").expect("paper");
+        let bibliography = workspace.join(".ragrig/references.bib");
+        std::fs::create_dir_all(bibliography.parent().expect("parent")).expect("ragrig dir");
+        std::fs::write(
+            &bibliography,
+            format!(
+                "@article{{Kano2025,\n  author = {{Kano, Fumihiro}},\n  year = {{2025}},\n  title = {{Gaze}},\n  file = {{{}}}\n}}\n",
+                paper.display()
+            ),
+        )
+        .expect("bibliography");
+
+        let (session, prompts) = test_session(&workspace, answer_chunks(), Duration::ZERO).await;
+        let mut setup = setup(&workspace);
+        setup.config.corpus_dirs = vec![format!("papers={}", corpus.display())];
+        let (commands, events, handle) = spawn_with(setup, session);
+        let _ = wait_for(&events, |event| matches!(event, RagEvent::AgentReady(_))).await;
+
+        commands
+            .send(RagCommand::Ask {
+                id: RequestId::new(6),
+                prompt: "summarise @Kano2025".to_owned(),
+                attachments: Vec::new(),
+            })
+            .await
+            .expect("send ask");
+        let event = wait_for(&events, |event| matches!(event, RagEvent::Citations { .. })).await;
+        let RagEvent::Citations { resolved, missed } = event else {
+            unreachable!()
+        };
+        assert!(missed.is_empty(), "{missed:?}");
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].key, "Kano2025");
+        assert_eq!(resolved[0].path, paper);
+
+        let _ = wait_for(&events, |event| matches!(event, RagEvent::Finished { .. })).await;
+        let prompts = prompts.lock().expect("prompts");
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("CITED PAPER BODY"));
 
         commands.close();
         handle.join().expect("worker thread");
