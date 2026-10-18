@@ -1,4 +1,8 @@
-//! The full Ragrig settings page.
+//! The Ragrig settings pages.
+//!
+//! Hosts can take the complete page, or split it by concern: [`rag_model_page`]
+//! contains the model/retrieval/apply groups, while [`rag_references_group`]
+//! can be added to a host's own library page.
 
 use gpui_kit::{
     AnyElement, App, Axis, ElementId, Entity, IntoElement, ParentElement as _, SharedString,
@@ -19,7 +23,7 @@ use gpui_kit::{
 use super::{ChatProvider, MemoryChoice, PdfBackend, RagController, RagSettings};
 use crate::{path_setting, token_slider};
 
-/// Build the full Ragrig settings page.
+/// Build the complete Ragrig settings page.
 ///
 /// The Apply row validates [`RagSettings`] and asks the [`RagController`] to
 /// rebuild the agent. Profile actions are filesystem-only; they do not touch
@@ -29,8 +33,51 @@ pub fn rag_settings_page(
     controller: Entity<RagController>,
     cx: &App,
 ) -> SettingPage {
+    let mut page = SettingPage::new("RAG")
+        .description(
+            "Ragrig workspace, models, retrieval, and memory. Press Apply to rebuild the agent.",
+        )
+        .default_open(true)
+        .group(workspace_group(&settings))
+        .group(chat_group(&settings))
+        .group(retrieval_group(&settings))
+        .group(parsing_group(&settings))
+        .group(memory_group(&settings));
+    #[cfg(feature = "grobid")]
+    {
+        page = page.group(rag_references_group(&settings));
+    }
+    page = page
+        .group(profiles_group(&settings, cx))
+        .group(apply_group(&settings, &controller));
+    page
+}
+
+/// The model, retrieval, memory, profile, and apply groups.
+///
+/// This is the RAG page for a host that keeps workspace, bibliography, and
+/// reference ingestion on its own Library page.
+pub fn rag_model_page(
+    settings: Entity<RagSettings>,
+    controller: Entity<RagController>,
+    cx: &App,
+) -> SettingPage {
+    SettingPage::new("RAG")
+        .description("Models, retrieval, memory, and profiles. Press Apply to rebuild the agent.")
+        .default_open(true)
+        .group(chat_group(&settings))
+        .group(retrieval_group(&settings))
+        .group(parsing_group(&settings))
+        .group(memory_group(&settings))
+        .group(profiles_group(&settings, cx))
+        .group(apply_group(&settings, &controller))
+}
+
+/// The workspace and bibliography group for hosts that use Ragrig's page.
+fn workspace_group(settings: &Entity<RagSettings>) -> SettingGroup {
+    let settings_for_workspace = settings.clone();
     let workspace = path_setting(
-        "workspace",
+        "rag-workspace",
         "Choose the Ragrig workspace",
         true,
         false,
@@ -38,18 +85,16 @@ pub fn rag_settings_page(
             let settings = settings.clone();
             move |cx| settings.read(cx).workspace.clone()
         },
-        {
-            let settings = settings.clone();
-            move |value, cx| {
-                settings.update(cx, |settings, cx| {
-                    settings.workspace = value;
-                    cx.notify();
-                });
-            }
+        move |value, cx| {
+            settings_for_workspace.update(cx, |settings, cx| {
+                settings.workspace = value;
+                cx.notify();
+            });
         },
     );
+    let settings_for_bibliography = settings.clone();
     let bibliography = path_setting(
-        "bibliography",
+        "rag-bibliography",
         "Choose the bibliography file",
         false,
         true,
@@ -57,19 +102,28 @@ pub fn rag_settings_page(
             let settings = settings.clone();
             move |cx| settings.read(cx).bibliography.clone()
         },
-        {
-            let settings = settings.clone();
-            move |value, cx| {
-                settings.update(cx, |settings, cx| {
-                    settings.bibliography = value;
-                    cx.notify();
-                });
-            }
+        move |value, cx| {
+            settings_for_bibliography.update(cx, |settings, cx| {
+                settings.bibliography = value;
+                cx.notify();
+            });
         },
     );
 
+    SettingGroup::new()
+        .title("Workspace")
+        .item(
+            SettingItem::new("Workspace", workspace)
+                .description("Store, sessions, and profiles live under this folder (.ragrig)."),
+        )
+        .item(SettingItem::new("Bibliography", bibliography).description(
+            "The .bib the library reads and GROBID writes. Empty uses .ragrig/references.bib.",
+        ))
+}
+
+fn chat_group(settings: &Entity<RagSettings>) -> SettingGroup {
     let provider = dropdown_field(
-        &settings,
+        settings,
         provider_options(),
         |settings| settings.provider.label().to_owned(),
         |settings, value| {
@@ -80,17 +134,17 @@ pub fn rag_settings_page(
         },
     );
     let ollama_model = input_field(
-        &settings,
+        settings,
         |settings| settings.ollama_model.clone(),
         |settings, value| settings.ollama_model = value,
     );
     let deepseek_model = input_field(
-        &settings,
+        settings,
         |settings| settings.deepseek_model.clone(),
         |settings, value| settings.deepseek_model = value,
     );
     let temperature = number_field(
-        &settings,
+        settings,
         NumberFieldOptions {
             min: 0.0,
             max: 2.0,
@@ -136,23 +190,52 @@ pub fn rag_settings_page(
         },
     );
     let stream = switch_field(
-        &settings,
+        settings,
         |settings| settings.stream,
         |settings, value| settings.stream = value,
     );
     let system_prompt = input_field(
-        &settings,
+        settings,
         |settings| settings.system_prompt.clone(),
         |settings, value| settings.system_prompt = value,
     );
 
+    SettingGroup::new()
+        .title("Chat")
+        .item(
+            SettingItem::new("Provider", provider)
+                .description("DeepSeek reads DEEPSEEK_API_KEY from the environment."),
+        )
+        .item(
+            SettingItem::new("Ollama model", ollama_model)
+                .description("Used when the provider is Ollama."),
+        )
+        .item(
+            SettingItem::new("DeepSeek model", deepseek_model)
+                .description("Used when the provider is DeepSeek."),
+        )
+        .item(SettingItem::new("Stream responses", stream))
+        .item(
+            SettingItem::new("Temperature", temperature)
+                .description("0 is deterministic; 2 is very loose."),
+        )
+        .item(SettingItem::new("Maximum tokens", max_tokens))
+        .item(SettingItem::new("Context tokens", context_tokens))
+        .item(
+            SettingItem::new("System prompt", system_prompt)
+                .description("Sent before every question. Applied on the next Apply.")
+                .layout(Axis::Vertical),
+        )
+}
+
+fn retrieval_group(settings: &Entity<RagSettings>) -> SettingGroup {
     let embed_model = input_field(
-        &settings,
+        settings,
         |settings| settings.embed_model.clone(),
         |settings, value| settings.embed_model = value,
     );
     let top_k = number_field(
-        &settings,
+        settings,
         NumberFieldOptions {
             min: 1.0,
             max: 500.0,
@@ -162,7 +245,7 @@ pub fn rag_settings_page(
         |settings, value| settings.top_k = value.round().clamp(1.0, 500.0) as usize,
     );
     let threshold = number_field(
-        &settings,
+        settings,
         NumberFieldOptions {
             min: 0.0,
             max: 1.0,
@@ -172,8 +255,19 @@ pub fn rag_settings_page(
         |settings, value| settings.similarity_threshold = value.clamp(0.0, 1.0),
     );
 
+    SettingGroup::new()
+        .title("Retrieval")
+        .item(SettingItem::new("Embedding model", embed_model))
+        .item(SettingItem::new("Top-k chunks", top_k))
+        .item(
+            SettingItem::new("Similarity threshold", threshold)
+                .description("Chunks below this score are dropped."),
+        )
+}
+
+fn parsing_group(settings: &Entity<RagSettings>) -> SettingGroup {
     let pdf_backend = dropdown_field(
-        &settings,
+        settings,
         PdfBackend::options()
             .iter()
             .map(|(backend, label)| {
@@ -192,12 +286,12 @@ pub fn rag_settings_page(
         },
     );
     let sloppy_pdf = switch_field(
-        &settings,
+        settings,
         |settings| settings.sloppy_pdf,
         |settings, value| settings.sloppy_pdf = value,
     );
     let chunk_size = number_field(
-        &settings,
+        settings,
         NumberFieldOptions {
             min: 16.0,
             max: 32_768.0,
@@ -207,7 +301,7 @@ pub fn rag_settings_page(
         |settings, value| settings.chunk_size = value.round().clamp(16.0, 32_768.0) as usize,
     );
     let chunk_overlap = number_field(
-        &settings,
+        settings,
         NumberFieldOptions {
             min: 0.0,
             max: 8_192.0,
@@ -219,8 +313,29 @@ pub fn rag_settings_page(
         },
     );
 
+    SettingGroup::new()
+        .title("Parsing and chunking")
+        .item(
+            SettingItem::new("PDF backend", pdf_backend)
+                .description("Primary parser for PDF documents."),
+        )
+        .item(
+            SettingItem::new("Sloppy fallback", sloppy_pdf)
+                .description("Keep the panic-free PDF scavenger as a fallback."),
+        )
+        .item(SettingItem::new("Chunk size", chunk_size))
+        .item(SettingItem::new("Chunk overlap", chunk_overlap))
+        .footer(|_, cx| {
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Changing chunking only affects new ingestion, not stored chunks.")
+        })
+}
+
+fn memory_group(settings: &Entity<RagSettings>) -> SettingGroup {
     let memory = dropdown_field(
-        &settings,
+        settings,
         MemoryChoice::options()
             .iter()
             .map(|(choice, label)| {
@@ -239,191 +354,108 @@ pub fn rag_settings_page(
         },
     );
     let memory_model = input_field(
-        &settings,
+        settings,
         |settings| settings.memory_model.clone(),
         |settings, value| settings.memory_model = value,
     );
 
-    #[cfg(feature = "grobid")]
+    SettingGroup::new()
+        .title("Memory")
+        .item(SettingItem::new("Strategy", memory))
+        .item(
+            SettingItem::new("Memory model", memory_model)
+                .description("Small local model used for rewriting and summaries."),
+        )
+}
+
+/// Reference ingestion fields, for a host's Library page.
+#[cfg(feature = "grobid")]
+pub fn rag_references_group(settings: &Entity<RagSettings>) -> SettingGroup {
     let grobid_url = input_field(
-        &settings,
+        settings,
         |settings| settings.grobid_url.clone(),
         |settings, value| settings.grobid_url = value,
     );
-    #[cfg(feature = "grobid")]
     let rename_pdfs = switch_field(
-        &settings,
+        settings,
         |settings| settings.rename_pdfs,
         |settings, value| settings.rename_pdfs = value,
     );
-    #[cfg(feature = "grobid")]
     let openalex = switch_field(
-        &settings,
+        settings,
         |settings| settings.openalex,
         |settings, value| settings.openalex = value,
     );
-    #[cfg(feature = "grobid")]
     let resolve_citations = switch_field(
-        &settings,
+        settings,
         |settings| settings.resolve_citations,
         |settings, value| settings.resolve_citations = value,
     );
 
+    SettingGroup::new()
+        .title("References")
+        .item(
+            SettingItem::new("GROBID server", grobid_url)
+                .description("Used when parsing a folder's PDFs into the bibliography."),
+        )
+        .item(
+            SettingItem::new("Rename PDFs", rename_pdfs)
+                .description("Rename processed PDFs to Key - Authors - Title - Year."),
+        )
+        .item(
+            SettingItem::new("OpenAlex completion", openalex)
+                .description("Fill missing DOI and venue data from OpenAlex."),
+        )
+        .item(
+            SettingItem::new("Use @key citations", resolve_citations)
+                .description("Parse @key papers in a question and attach them as context."),
+        )
+        .footer(|_, cx| {
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(
+                    "Records merge into the Library bibliography (default .ragrig/references.bib).",
+                )
+        })
+}
+
+fn profiles_group(settings: &Entity<RagSettings>, cx: &App) -> SettingGroup {
     let profile_name = input_field(
-        &settings,
+        settings,
         |settings| settings.profile_name.clone(),
         |settings, value| settings.profile_name = value,
     );
     let profile_choice = dropdown_field(
-        &settings,
-        profile_options(&settings, cx),
+        settings,
+        profile_options(settings, cx),
         |settings| settings.profile_name.clone(),
         |settings, value| settings.profile_name = value,
     );
-
     let profile_actions = SettingItem::render({
         let settings = settings.clone();
         move |_, _, cx| profile_buttons(settings.clone(), cx)
     });
 
-    let apply = SettingItem::render({
-        let settings = settings.clone();
-        let controller = controller.clone();
-        move |_, _, cx| apply_row(settings.clone(), controller.clone(), cx)
-    });
+    SettingGroup::new()
+        .title("Profiles")
+        .item(SettingItem::new("Profile name", profile_name))
+        .item(SettingItem::new("Load profile", profile_choice))
+        .item(profile_actions)
+        .footer(|_, cx| {
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Profiles are JSON files in .ragrig/profiles; secrets are never written.")
+        })
+}
 
-    let mut page = SettingPage::new("RAG")
-        .description(
-            "Ragrig workspace, models, retrieval, and memory. Press Apply to rebuild the agent.",
-        )
-        .default_open(true)
-        .group(
-            SettingGroup::new()
-                .title("Workspace")
-                .item(SettingItem::new("Workspace", workspace).description(
-                    "Store, sessions, and profiles live under this folder (.ragrig).",
-                ))
-                .item(
-                    SettingItem::new("Bibliography", bibliography).description(
-                        "The .bib the library reads and GROBID writes. Empty uses .ragrig/references.bib.",
-                    ),
-                ),
-        )
-        .group(
-            SettingGroup::new()
-                .title("Chat")
-                .item(
-                    SettingItem::new("Provider", provider)
-                        .description("DeepSeek reads DEEPSEEK_API_KEY from the environment."),
-                )
-                .item(
-                    SettingItem::new("Ollama model", ollama_model)
-                        .description("Used when the provider is Ollama."),
-                )
-                .item(
-                    SettingItem::new("DeepSeek model", deepseek_model)
-                        .description("Used when the provider is DeepSeek."),
-                )
-                .item(SettingItem::new("Stream responses", stream))
-                .item(
-                    SettingItem::new("Temperature", temperature)
-                        .description("0 is deterministic; 2 is very loose."),
-                )
-                .item(SettingItem::new("Maximum tokens", max_tokens))
-                .item(SettingItem::new("Context tokens", context_tokens))
-                .item(
-                    SettingItem::new("System prompt", system_prompt)
-                        .description("Sent before every question. Applied on the next Apply.")
-                        .layout(Axis::Vertical),
-                ),
-        )
-        .group(
-            SettingGroup::new()
-                .title("Retrieval")
-                .item(SettingItem::new("Embedding model", embed_model))
-                .item(SettingItem::new("Top-k chunks", top_k))
-                .item(
-                    SettingItem::new("Similarity threshold", threshold)
-                        .description("Chunks below this score are dropped."),
-                ),
-        )
-        .group(
-            SettingGroup::new()
-                .title("Parsing and chunking")
-                .item(
-                    SettingItem::new("PDF backend", pdf_backend)
-                        .description("Primary parser for PDF documents."),
-                )
-                .item(
-                    SettingItem::new("Sloppy fallback", sloppy_pdf)
-                        .description("Keep the panic-free PDF scavenger as a fallback."),
-                )
-                .item(SettingItem::new("Chunk size", chunk_size))
-                .item(SettingItem::new("Chunk overlap", chunk_overlap))
-                .footer(|_, cx| {
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Changing chunking only affects new ingestion, not stored chunks.")
-                }),
-        )
-        .group(
-            SettingGroup::new()
-                .title("Memory")
-                .item(SettingItem::new("Strategy", memory))
-                .item(
-                    SettingItem::new("Memory model", memory_model)
-                        .description("Small local model used for rewriting and summaries."),
-                ),
-        );
-
-    #[cfg(feature = "grobid")]
-    {
-        page = page.group(
-            SettingGroup::new()
-                .title("References")
-                .item(
-                    SettingItem::new("GROBID server", grobid_url)
-                        .description("Used when parsing a folder's PDFs into the bibliography."),
-                )
-                .item(
-                    SettingItem::new("Rename PDFs", rename_pdfs)
-                        .description("Rename processed PDFs to Key - Authors - Title - Year."),
-                )
-                .item(
-                    SettingItem::new("OpenAlex completion", openalex)
-                        .description("Fill missing DOI and venue data from OpenAlex."),
-                )
-                .item(
-                    SettingItem::new("Use @key citations", resolve_citations)
-                        .description("Parse @key papers in a question and attach them as context."),
-                )
-                .footer(|_, cx| {
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Records merge into the bibliography above (default .ragrig/references.bib).")
-                }),
-        );
-    }
-
-    page = page
-        .group(
-            SettingGroup::new()
-                .title("Profiles")
-                .item(SettingItem::new("Profile name", profile_name))
-                .item(SettingItem::new("Load profile", profile_choice))
-                .item(profile_actions)
-                .footer(|_, cx| {
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Profiles are JSON files in .ragrig/profiles; secrets are never written.")
-                }),
-        )
-        .group(SettingGroup::new().title("Apply").item(apply));
-
-    page
+fn apply_group(settings: &Entity<RagSettings>, controller: &Entity<RagController>) -> SettingGroup {
+    let settings = settings.clone();
+    let controller = controller.clone();
+    let apply =
+        SettingItem::render(move |_, _, cx| apply_row(settings.clone(), controller.clone(), cx));
+    SettingGroup::new().title("Apply").item(apply)
 }
 
 /// Build a complete [`Settings`] element for Ragrig configuration.

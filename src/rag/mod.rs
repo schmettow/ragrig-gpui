@@ -28,7 +28,9 @@ pub use protocol::{
     PendingAttachment, RagCommand, RagEvent, RagReply, RequestId, SessionInfo, SessionTurn,
     SyncSummary,
 };
-pub use settings_page::{rag_settings, rag_settings_page};
+#[cfg(feature = "grobid")]
+pub use settings_page::rag_references_group;
+pub use settings_page::{rag_model_page, rag_settings, rag_settings_page};
 
 pub(crate) fn count_label(count: usize, singular: &str, plural: &str) -> String {
     format!("{count} {}", if count == 1 { singular } else { plural })
