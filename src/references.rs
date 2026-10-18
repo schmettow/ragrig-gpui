@@ -671,13 +671,14 @@ fn normalize_text(text: &str) -> String {
 type CopyHandler = Rc<dyn Fn(ReferenceCopy, &mut Window, &mut App)>;
 type SelectHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
-/// A two-line reference row with hover-revealed copy and selection actions.
+/// A two-line reference row with copy and selection actions.
 ///
-/// While the pointer is over the row, a **+** appears at its leading edge and
-/// **Copy @key** / **Copy path** at its trailing edge. Every control keeps its
-/// slot in every frame, so the text never jumps when the actions become
-/// visible. A row without a resolved PDF keeps the path button disabled and
-/// explains why in its tooltip.
+/// **Copy @key** and **Copy path** keep their slot at the trailing edge and
+/// stay visible at reduced opacity, becoming fully opaque while the row is
+/// hovered. A **+** appears at the leading edge on hover. Every control keeps
+/// its slot in every frame, so the text never jumps when the actions appear. A
+/// row without a resolved PDF keeps the path button disabled and explains why
+/// in its tooltip.
 #[derive(IntoElement)]
 pub struct ReferenceRow {
     index: usize,
@@ -900,8 +901,8 @@ impl RenderOnce for ReferenceRow {
                 h_flex()
                     .flex_none()
                     .gap_1()
-                    .invisible()
-                    .group_hover(group, |this| this.visible())
+                    .opacity(0.45)
+                    .group_hover(group, |this| this.opacity(1.0))
                     .child(
                         div()
                             .debug_selector(|| "reference-copy-key".to_owned())

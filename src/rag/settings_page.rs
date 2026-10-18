@@ -17,6 +17,7 @@ use gpui_kit::{
 };
 
 use super::{ChatProvider, MemoryChoice, PdfBackend, RagController, RagSettings};
+use crate::{path_setting, token_slider};
 
 /// Build the full Ragrig settings page.
 ///
@@ -28,15 +29,43 @@ pub fn rag_settings_page(
     controller: Entity<RagController>,
     cx: &App,
 ) -> SettingPage {
-    let workspace = input_field(
-        &settings,
-        |settings| settings.workspace.clone(),
-        |settings, value| settings.workspace = value,
+    let workspace = path_setting(
+        "workspace",
+        "Choose the Ragrig workspace",
+        true,
+        false,
+        {
+            let settings = settings.clone();
+            move |cx| settings.read(cx).workspace.clone()
+        },
+        {
+            let settings = settings.clone();
+            move |value, cx| {
+                settings.update(cx, |settings, cx| {
+                    settings.workspace = value;
+                    cx.notify();
+                });
+            }
+        },
     );
-    let bibliography = input_field(
-        &settings,
-        |settings| settings.bibliography.clone(),
-        |settings, value| settings.bibliography = value,
+    let bibliography = path_setting(
+        "bibliography",
+        "Choose the bibliography file",
+        false,
+        true,
+        {
+            let settings = settings.clone();
+            move |cx| settings.read(cx).bibliography.clone()
+        },
+        {
+            let settings = settings.clone();
+            move |value, cx| {
+                settings.update(cx, |settings, cx| {
+                    settings.bibliography = value;
+                    cx.notify();
+                });
+            }
+        },
     );
 
     let provider = dropdown_field(
@@ -70,26 +99,40 @@ pub fn rag_settings_page(
         |settings| settings.temperature,
         |settings, value| settings.temperature = value.clamp(0.0, 2.0),
     );
-    let max_tokens = number_field(
-        &settings,
-        NumberFieldOptions {
-            min: 1.0,
-            max: 1_000_000.0,
-            step: 1.0,
+    let max_tokens = token_slider(
+        "max-tokens",
+        9,
+        20,
+        {
+            let settings = settings.clone();
+            move |cx| settings.read(cx).max_tokens
         },
-        |settings| settings.max_tokens as f64,
-        |settings, value| settings.max_tokens = value.round().clamp(1.0, 1_000_000.0) as usize,
+        {
+            let settings = settings.clone();
+            move |value, cx| {
+                settings.update(cx, |settings, cx| {
+                    settings.max_tokens = value;
+                    cx.notify();
+                });
+            }
+        },
     );
-    let context_tokens = number_field(
-        &settings,
-        NumberFieldOptions {
-            min: 256.0,
-            max: 1_000_000.0,
-            step: 256.0,
+    let context_tokens = token_slider(
+        "context-tokens",
+        9,
+        20,
+        {
+            let settings = settings.clone();
+            move |cx| settings.read(cx).context_tokens
         },
-        |settings| settings.context_tokens as f64,
-        |settings, value| {
-            settings.context_tokens = value.round().clamp(256.0, 1_000_000.0) as usize;
+        {
+            let settings = settings.clone();
+            move |value, cx| {
+                settings.update(cx, |settings, cx| {
+                    settings.context_tokens = value;
+                    cx.notify();
+                });
+            }
         },
     );
     let stream = switch_field(

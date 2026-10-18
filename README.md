@@ -75,12 +75,13 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
 - **Library** (left dock): enter a folder, press **Index**, watch documents and
   chunks appear. Indexing is incremental and can be stopped.
 - **References** (Library, with `--features grobid`): press **GROBID** to parse
-  the folder's PDFs. Rows show `@key`, authors, year, and title. Hover a row
-  for a leading **+** and **Copy @key** / **Copy path**; a row without a PDF
-  explains why the path button is disabled. Select any number of rows and one
-  floating bar appears with **Copy @keys**, **Copy paths**, **Attach to next
-  question**, and **Clear**. The last-run report shows parsed, cached, merged,
-  and duplicate counts.
+  the folder's PDFs. Rows show `@key`, authors, year, and title. **Copy @key**,
+  **Copy path**, and open stay visible on every row at reduced opacity and
+  become fully opaque on hover; a row without a PDF explains why the path
+  button is disabled. Select any number of rows and one floating bar appears
+  with **Copy @keys**, **Copy paths**, **Attach to next question**, and
+  **Clear**. The last-run report shows parsed, cached, merged, and duplicate
+  counts.
 - Click the paperclip on a document row to attach it to the next question.
 - **Chat** (center): ask a question. Write `@Kano2025` (or any key shown in the
   bibliography) and the paper is parsed and attached as one-shot context; a
@@ -91,8 +92,10 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
   in Settings rebuilds the agent and reloads the current saved session.
 - **Settings** (right dock): workspace, provider, models, generation, prompt,
   embeddings, retrieval, PDF backend, chunking, memory, and (with `grobid`)
-  GROBID extraction plus the **Use @key citations** switch. **Apply** validates
-  and rebuilds. **Profiles** save/load JSON under `.ragrig/profiles`.
+  GROBID extraction plus the **Use @key citations** switch. Workspace and
+  bibliography have **Browse…** pickers; **Maximum tokens** and **Context
+  tokens** are sliders over powers of two. **Apply** validates and rebuilds.
+  **Profiles** save/load JSON under `.ragrig/profiles`.
 - **Components** (right dock): live Ragrig pipeline status.
 - Chat with an empty library; Ragrig falls back to pure chat.
 
@@ -164,7 +167,8 @@ ragrig-gpui
   `<sciscraper:v1:truncated shown="…" total="…"/>` marker, which the co-writer
   prompt already understands.
 - `rag_settings(id, settings, controller, cx)` builds the complete page;
-  Apply is explicit.
+  Apply is explicit. `path_setting` and `token_slider` are exported for hosts
+  that need the same file pickers or 2^x token controls.
 
 ## Checks
 
@@ -176,7 +180,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 72 library tests (including nine actor tests with a fake
+Current suite: 74 library tests (including nine actor tests with a fake
 generator and embedder, context-format and budgeting tests, citation-resolution
 tests, and GPUI hover, selection and bulk-clipboard tests), 2 gallery tests, 5
 active spike tests plus one ignored typing benchmark, and 2 doctests. One

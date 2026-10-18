@@ -36,6 +36,7 @@ mod rag;
 #[cfg(feature = "grobid")]
 mod references;
 mod session_picker;
+mod setting_fields;
 mod settings;
 mod side_panel;
 
@@ -57,6 +58,7 @@ pub use references::{
     ReferenceStage, keys_text, paths_text,
 };
 pub use session_picker::{SessionPicker, SessionPickerEvent};
+pub use setting_fields::{path_setting, token_slider};
 pub use settings::{chat_settings, chat_settings_page};
 pub use side_panel::SidePanel;
 

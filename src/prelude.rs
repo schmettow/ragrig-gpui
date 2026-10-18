@@ -9,7 +9,7 @@ pub use crate::{
     ChatMessage, ChatRole, ChatSettings, ChatState, ChatView, ChatViewEvent, ComponentKind,
     ComponentStatus, Composer, ComposerEvent, EmptyState, MessageId, MessageMeta, MessageState,
     NewMessage, SessionEntry, SessionPicker, SessionPickerEvent, SidePanel, SourceRef,
-    chat_settings, chat_settings_page,
+    chat_settings, chat_settings_page, path_setting, token_slider,
 };
 
 #[cfg(feature = "ragrig")]
