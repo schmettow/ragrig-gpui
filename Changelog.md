@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Editor roundtrip contract.** `editor::EditorSurface` describes the minimal
   editor a host plugs in; `editor::RoundtripHost` supplies the active document,
-  selection, and guarded write-back; `editor::Roundtrip` builds the document
+  selection, and guarded write-back (with the window needed by a GUI editor);
+  `editor::Roundtrip` builds the document
   and selection containers and routes replacements. The protocol
   (`RoundtripContext`, `Replacement`, `verified_bytes`, `replace_at`) moved here
   from `sciscraper-gpui`, so the editor backend is now swappable.

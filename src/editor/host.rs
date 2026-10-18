@@ -72,7 +72,7 @@ pub trait EditorSurface {
     /// The marked passage as a char range, or `None` when nothing is marked.
     fn selection(&self, window: &mut Window, cx: &mut App) -> Option<Range<usize>>;
     /// Replace a byte range as one undo step.
-    fn replace(&self, range: Range<usize>, text: &str, cx: &mut App);
+    fn replace(&self, range: Range<usize>, text: &str, window: &mut Window, cx: &mut App);
     /// Focus this editor.
     fn focus(&self, window: &mut Window, cx: &mut App);
 
@@ -99,6 +99,7 @@ pub trait RoundtripHost {
         &self,
         target: ReplacementTarget,
         text: &str,
+        window: &mut Window,
         cx: &mut App,
     ) -> ReplacementOutcome;
 }
@@ -191,7 +192,13 @@ impl Roundtrip {
     }
 
     /// Apply a guarded replacement through the host.
-    pub fn apply(&self, target: ReplacementTarget, text: &str, cx: &mut App) -> ReplacementOutcome {
-        self.host.apply_replacement(target, text, cx)
+    pub fn apply(
+        &self,
+        target: ReplacementTarget,
+        text: &str,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ReplacementOutcome {
+        self.host.apply_replacement(target, text, window, cx)
     }
 }
