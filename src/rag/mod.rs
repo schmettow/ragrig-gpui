@@ -21,16 +21,18 @@ mod settings_page;
 
 pub use attach::SciscraperAttach;
 pub use chat::{RagChat, RagChatEvent};
-pub use config::{ChatProvider, MemoryChoice, PdfBackend, RagSettings, RagSetup};
+pub use config::{
+    ChatProvider, MemoryChoice, PdfBackend, RagChanges, RagField, RagSection, RagSettings, RagSetup,
+};
 pub use controller::RagController;
 pub use protocol::{
     AgentInfo, AttachmentSource, IngestPhase, IngestProgress, LibraryDocument, LibrarySnapshot,
     PendingAttachment, RagCommand, RagEvent, RagReply, RequestId, SessionInfo, SessionTurn,
     SyncSummary,
 };
-#[cfg(feature = "grobid")]
-pub use settings_page::rag_references_group;
-pub use settings_page::{rag_model_page, rag_settings, rag_settings_page};
+pub use settings_page::{
+    Changes, no_changes, rag_model_page, rag_references_group, rag_settings, rag_settings_page,
+};
 
 pub(crate) fn count_label(count: usize, singular: &str, plural: &str) -> String {
     format!("{count} {}", if count == 1 { singular } else { plural })

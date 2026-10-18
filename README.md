@@ -95,7 +95,15 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
   GROBID extraction plus the **Use @key citations** switch. Workspace and
   bibliography have **Browse…** pickers; **Maximum tokens** and **Context
   tokens** are sliders over powers of two. **Apply** validates and rebuilds.
-  **Profiles** save/load JSON under `.ragrig/profiles`.
+  **Profiles** save/load JSON under `.ragrig/profiles`. Hosts that split the
+  page can use `rag_model_page` with their own Overview/Apply row; the
+  standalone `rag_settings_page` keeps Profiles and Apply.
+- **Pending changes**: pass a `Changes` closure (usually
+  `RagSettings::dirty_since(&applied)`) and the page marks changed fields in
+  bold violet, adds `●` to their sections, and shows an “Unsaved changes” line.
+  `SettingRow` is the reusable marked row; `path_control`, `token_control`,
+  `text_control`, `number_control`, `switch_control`, and `dropdown_control`
+  are the matching controls.
 - **Components** (right dock): live Ragrig pipeline status.
 - Chat with an empty library; Ragrig falls back to pure chat.
 
@@ -167,10 +175,15 @@ ragrig-gpui
   `<sciscraper:v1:truncated shown="…" total="…"/>` marker, which the SciCo
   prompt already understands.
 - `rag_settings(id, settings, controller, cx)` builds the complete page;
-  Apply is explicit. `rag_model_page` exposes the Chat/Retrieval/Parsing/Memory/
-  Profiles/Apply groups, and `rag_references_group` can be added to a host's
-  Library page. `path_setting` and `token_slider` are exported for hosts that
-  need the same file pickers or 2^x token controls.
+  Apply is explicit. `rag_model_page(settings, changes, cx)` exposes the
+  Chat/Retrieval/Parsing/Memory groups, and `rag_references_group(settings,
+  changes)` can be added to a host's Library page. `path_setting`,
+  `token_slider`, `SettingRow`, `dirty_color`, and `dirty_header` are exported
+  for hosts that need the same pickers, 2^x token controls, or unsaved marks.
+- `RagSettings::dirty_since(&applied)` returns a `RagChanges` set of
+  `RagField`s; `RagSection` groups them for page and section indicators.
+  `RagSettings::reset_to_profile_defaults()` reloads the selected profile (or
+  the built-in defaults while preserving the workspace and bibliography).
 
 ## Checks
 
@@ -182,11 +195,12 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 74 library tests (including nine actor tests with a fake
+Current suite: 79 library tests (including nine actor tests with a fake
 generator and embedder, context-format and budgeting tests, citation-resolution
-tests, and GPUI hover, selection and bulk-clipboard tests), 2 gallery tests, 5
-active spike tests plus one ignored typing benchmark, and 2 doctests. One
-GROBID end-to-end test is ignored by default:
+tests, field-level pending-change tests, and GPUI hover, selection and
+bulk-clipboard tests), 2 gallery tests, 5 active spike tests plus one ignored
+typing benchmark, and 2 doctests. One GROBID end-to-end test is ignored by
+default:
 
 ```sh
 cargo test --all-features grobid_extracts_the_test_library_end_to_end \

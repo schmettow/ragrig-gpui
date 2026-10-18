@@ -58,7 +58,10 @@ pub use references::{
     ReferenceStage, keys_text, paths_text,
 };
 pub use session_picker::{SessionPicker, SessionPickerEvent};
-pub use setting_fields::{path_setting, token_slider};
+pub use setting_fields::{
+    Control, SettingRow, control, dirty_color, dirty_header, dropdown_control, number_control,
+    path_control, path_setting, switch_control, text_control, token_control, token_slider,
+};
 pub use settings::{chat_settings, chat_settings_page};
 pub use side_panel::SidePanel;
 

@@ -1,11 +1,18 @@
 //! The Ragrig settings pages.
 //!
 //! Hosts can take the complete page, or split it by concern: [`rag_model_page`]
-//! contains the model/retrieval/apply groups, while [`rag_references_group`]
-//! can be added to a host's own library page.
+//! contains the model, retrieval, parsing, and memory groups, while
+//! [`rag_references_group`] can be added to a host's own library page.
+//!
+//! Rows are built with [`SettingRow`] rather than [`SettingItem::new`] so a
+//! field that differs from the applied configuration can be marked in bold
+//! violet. Pass a [`Changes`] closure to report those differences; a host that
+//! does not track them can pass [`no_changes`].
+
+use std::rc::Rc;
 
 use gpui_kit::{
-    AnyElement, App, Axis, ElementId, Entity, IntoElement, ParentElement as _, SharedString,
+    AnyElement, App, ElementId, Entity, FontWeight, IntoElement, ParentElement as _, SharedString,
     Styled as _,
     component::{
         ActiveTheme as _, Sizable as _,
@@ -20,8 +27,22 @@ use gpui_kit::{
     prelude::FluentBuilder as _,
 };
 
-use super::{ChatProvider, MemoryChoice, PdfBackend, RagController, RagSettings};
-use crate::{path_setting, token_slider};
+use super::{
+    ChatProvider, MemoryChoice, PdfBackend, RagChanges, RagController, RagField, RagSection,
+    RagSettings,
+};
+use crate::{
+    SettingRow, dirty_color, dirty_header, dropdown_control, number_control, path_setting,
+    switch_control, text_control, token_control,
+};
+
+/// Reports which settings differ from the configuration applied to the worker.
+pub type Changes = Rc<dyn Fn(&App) -> RagChanges>;
+
+/// A [`Changes`] closure for hosts that do not track pending edits.
+pub fn no_changes() -> Changes {
+    Rc::new(|_| RagChanges::default())
+}
 
 /// Build the complete Ragrig settings page.
 ///
@@ -33,44 +54,53 @@ pub fn rag_settings_page(
     controller: Entity<RagController>,
     cx: &App,
 ) -> SettingPage {
+    let changes = no_changes();
+    let now = RagChanges::default();
     let mut page = SettingPage::new("RAG")
         .description(
             "Ragrig workspace, models, retrieval, and memory. Press Apply to rebuild the agent.",
         )
         .default_open(true)
         .group(workspace_group(&settings))
-        .group(chat_group(&settings))
-        .group(retrieval_group(&settings))
-        .group(parsing_group(&settings))
-        .group(memory_group(&settings));
-    #[cfg(feature = "grobid")]
-    {
-        page = page.group(rag_references_group(&settings));
-    }
+        .group(chat_group(&settings, &changes, &now))
+        .group(retrieval_group(&settings, &changes, &now))
+        .group(parsing_group(&settings, &changes, &now))
+        .group(memory_group(&settings, &changes, &now))
+        .group(rag_references_group(&settings, &changes));
     page = page
         .group(profiles_group(&settings, cx))
         .group(apply_group(&settings, &controller));
     page
 }
 
-/// The model, retrieval, memory, profile, and apply groups.
+/// The model, retrieval, parsing, and memory groups.
 ///
-/// This is the RAG page for a host that keeps workspace, bibliography, and
-/// reference ingestion on its own Library page.
-pub fn rag_model_page(
-    settings: Entity<RagSettings>,
-    controller: Entity<RagController>,
-    cx: &App,
-) -> SettingPage {
-    SettingPage::new("RAG")
-        .description("Models, retrieval, memory, and profiles. Press Apply to rebuild the agent.")
-        .default_open(true)
-        .group(chat_group(&settings))
-        .group(retrieval_group(&settings))
-        .group(parsing_group(&settings))
-        .group(memory_group(&settings))
-        .group(profiles_group(&settings, cx))
-        .group(apply_group(&settings, &controller))
+/// This is the RAG page for a host that keeps workspace, bibliography,
+/// profile management, and reference ingestion on its own pages.
+pub fn rag_model_page(settings: Entity<RagSettings>, changes: Changes, cx: &App) -> SettingPage {
+    let now = changes(cx);
+    let page_dirty = [
+        RagSection::Chat,
+        RagSection::Retrieval,
+        RagSection::Parsing,
+        RagSection::Memory,
+    ]
+    .iter()
+    .any(|section| now.section(*section));
+    let page = SettingPage::new(group_title("RAG", page_dirty))
+        .description(
+            "Models, retrieval, parsing, and memory. Press Apply on Overview to rebuild the agent.",
+        )
+        .default_open(true);
+    let page = if page_dirty {
+        page.header_style(&dirty_header(cx))
+    } else {
+        page
+    };
+    page.group(chat_group(&settings, &changes, &now))
+        .group(retrieval_group(&settings, &changes, &now))
+        .group(parsing_group(&settings, &changes, &now))
+        .group(memory_group(&settings, &changes, &now))
 }
 
 /// The workspace and bibliography group for hosts that use Ragrig's page.
@@ -121,10 +151,12 @@ fn workspace_group(settings: &Entity<RagSettings>) -> SettingGroup {
         ))
 }
 
-fn chat_group(settings: &Entity<RagSettings>) -> SettingGroup {
-    let provider = dropdown_field(
+fn chat_group(settings: &Entity<RagSettings>, changes: &Changes, now: &RagChanges) -> SettingGroup {
+    let provider = dropdown_row(
         settings,
-        provider_options(),
+        changes,
+        spec("rag-provider", RagField::Provider, "Provider"),
+        move |_| provider_options(),
         |settings| settings.provider.label().to_owned(),
         |settings, value| {
             settings.provider = ChatProvider::options()
@@ -132,19 +164,39 @@ fn chat_group(settings: &Entity<RagSettings>) -> SettingGroup {
                 .find(|(_, label)| *label == value)
                 .map_or(ChatProvider::Ollama, |(provider, _)| *provider);
         },
-    );
-    let ollama_model = input_field(
+    )
+    .description("DeepSeek reads DEEPSEEK_API_KEY from the environment.");
+    let ollama_model = text_row(
         settings,
+        changes,
+        spec("rag-ollama-model", RagField::OllamaModel, "Ollama model"),
         |settings| settings.ollama_model.clone(),
         |settings, value| settings.ollama_model = value,
-    );
-    let deepseek_model = input_field(
+    )
+    .description("Used when the provider is Ollama.");
+    let deepseek_model = text_row(
         settings,
+        changes,
+        spec(
+            "rag-deepseek-model",
+            RagField::DeepseekModel,
+            "DeepSeek model",
+        ),
         |settings| settings.deepseek_model.clone(),
         |settings, value| settings.deepseek_model = value,
-    );
-    let temperature = number_field(
+    )
+    .description("Used when the provider is DeepSeek.");
+    let stream = switch_row(
         settings,
+        changes,
+        spec("rag-stream", RagField::Stream, "Stream responses"),
+        |settings| settings.stream,
+        |settings, value| settings.stream = value,
+    );
+    let temperature = number_row(
+        settings,
+        changes,
+        spec("rag-temperature", RagField::Temperature, "Temperature"),
         NumberFieldOptions {
             min: 0.0,
             max: 2.0,
@@ -152,90 +204,72 @@ fn chat_group(settings: &Entity<RagSettings>) -> SettingGroup {
         },
         |settings| settings.temperature,
         |settings, value| settings.temperature = value.clamp(0.0, 2.0),
-    );
-    let max_tokens = token_slider(
-        "max-tokens",
+    )
+    .description("0 is deterministic; 2 is very loose.");
+    let max_tokens = token_row(
+        settings,
+        changes,
+        spec("rag-max-tokens", RagField::MaxTokens, "Maximum tokens"),
         9,
         20,
-        {
-            let settings = settings.clone();
-            move |cx| settings.read(cx).max_tokens
-        },
-        {
-            let settings = settings.clone();
-            move |value, cx| {
-                settings.update(cx, |settings, cx| {
-                    settings.max_tokens = value;
-                    cx.notify();
-                });
-            }
-        },
+        |settings| settings.max_tokens,
+        |settings, value| settings.max_tokens = value,
     );
-    let context_tokens = token_slider(
-        "context-tokens",
+    let context_tokens = token_row(
+        settings,
+        changes,
+        spec(
+            "rag-context-tokens",
+            RagField::ContextTokens,
+            "Context tokens",
+        ),
         9,
         20,
-        {
-            let settings = settings.clone();
-            move |cx| settings.read(cx).context_tokens
-        },
-        {
-            let settings = settings.clone();
-            move |value, cx| {
-                settings.update(cx, |settings, cx| {
-                    settings.context_tokens = value;
-                    cx.notify();
-                });
-            }
-        },
+        |settings| settings.context_tokens,
+        |settings, value| settings.context_tokens = value,
     );
-    let stream = switch_field(
+    let system_prompt = text_row(
         settings,
-        |settings| settings.stream,
-        |settings, value| settings.stream = value,
-    );
-    let system_prompt = input_field(
-        settings,
+        changes,
+        spec("rag-system-prompt", RagField::SystemPrompt, "System prompt"),
         |settings| settings.system_prompt.clone(),
         |settings, value| settings.system_prompt = value,
-    );
+    )
+    .description("Sent before every question. Applied on the next Apply.")
+    .vertical();
 
-    SettingGroup::new()
-        .title("Chat")
-        .item(
-            SettingItem::new("Provider", provider)
-                .description("DeepSeek reads DEEPSEEK_API_KEY from the environment."),
-        )
-        .item(
-            SettingItem::new("Ollama model", ollama_model)
-                .description("Used when the provider is Ollama."),
-        )
-        .item(
-            SettingItem::new("DeepSeek model", deepseek_model)
-                .description("Used when the provider is DeepSeek."),
-        )
-        .item(SettingItem::new("Stream responses", stream))
-        .item(
-            SettingItem::new("Temperature", temperature)
-                .description("0 is deterministic; 2 is very loose."),
-        )
-        .item(SettingItem::new("Maximum tokens", max_tokens))
-        .item(SettingItem::new("Context tokens", context_tokens))
-        .item(
-            SettingItem::new("System prompt", system_prompt)
-                .description("Sent before every question. Applied on the next Apply.")
-                .layout(Axis::Vertical),
-        )
+    mark_group(
+        SettingGroup::new()
+            .title(group_title("Chat", now.section(RagSection::Chat)))
+            .item(provider.into_item())
+            .item(ollama_model.into_item())
+            .item(deepseek_model.into_item())
+            .item(stream.into_item())
+            .item(temperature.into_item())
+            .item(max_tokens.into_item())
+            .item(context_tokens.into_item())
+            .item(system_prompt.into_item()),
+        now,
+        RagSection::Chat,
+    )
 }
 
-fn retrieval_group(settings: &Entity<RagSettings>) -> SettingGroup {
-    let embed_model = input_field(
+fn retrieval_group(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    now: &RagChanges,
+) -> SettingGroup {
+    let embed_model = text_row(
         settings,
+        changes,
+        spec("rag-embed-model", RagField::EmbedModel, "Embedding model"),
         |settings| settings.embed_model.clone(),
         |settings, value| settings.embed_model = value,
     );
-    let top_k = number_field(
+    let top_k = number_row(
         settings,
+        changes,
+        spec("rag-top-k", RagField::TopK, "Top-k chunks"),
         NumberFieldOptions {
             min: 1.0,
             max: 500.0,
@@ -244,8 +278,14 @@ fn retrieval_group(settings: &Entity<RagSettings>) -> SettingGroup {
         |settings| settings.top_k as f64,
         |settings, value| settings.top_k = value.round().clamp(1.0, 500.0) as usize,
     );
-    let threshold = number_field(
+    let threshold = number_row(
         settings,
+        changes,
+        spec(
+            "rag-threshold",
+            RagField::SimilarityThreshold,
+            "Similarity threshold",
+        ),
         NumberFieldOptions {
             min: 0.0,
             max: 1.0,
@@ -253,30 +293,56 @@ fn retrieval_group(settings: &Entity<RagSettings>) -> SettingGroup {
         },
         |settings| settings.similarity_threshold,
         |settings, value| settings.similarity_threshold = value.clamp(0.0, 1.0),
-    );
+    )
+    .description("Chunks below this score are dropped.");
+    let corpus_dirs = text_row(
+        settings,
+        changes,
+        spec("rag-corpus-dirs", RagField::CorpusDirs, "Folder corpora"),
+        |settings| settings.corpus_dirs.join(", "),
+        |settings, value| {
+            settings.corpus_dirs = value
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(str::to_owned)
+                .collect();
+        },
+    )
+    .description("Comma-separated name=path pairs.")
+    .vertical();
 
-    SettingGroup::new()
-        .title("Retrieval")
-        .item(SettingItem::new("Embedding model", embed_model))
-        .item(SettingItem::new("Top-k chunks", top_k))
-        .item(
-            SettingItem::new("Similarity threshold", threshold)
-                .description("Chunks below this score are dropped."),
-        )
+    mark_group(
+        SettingGroup::new()
+            .title(group_title("Retrieval", now.section(RagSection::Retrieval)))
+            .item(embed_model.into_item())
+            .item(top_k.into_item())
+            .item(threshold.into_item())
+            .item(corpus_dirs.into_item()),
+        now,
+        RagSection::Retrieval,
+    )
 }
 
-fn parsing_group(settings: &Entity<RagSettings>) -> SettingGroup {
-    let pdf_backend = dropdown_field(
+fn parsing_group(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    now: &RagChanges,
+) -> SettingGroup {
+    let pdf_options: Vec<(SharedString, SharedString)> = PdfBackend::options()
+        .iter()
+        .map(|(backend, label)| {
+            (
+                SharedString::from(backend.label()),
+                SharedString::from(*label),
+            )
+        })
+        .collect();
+    let pdf_backend = dropdown_row(
         settings,
-        PdfBackend::options()
-            .iter()
-            .map(|(backend, label)| {
-                (
-                    SharedString::from(backend.label()),
-                    SharedString::from(*label),
-                )
-            })
-            .collect(),
+        changes,
+        spec("rag-pdf-backend", RagField::PdfBackend, "PDF backend"),
+        move |_| pdf_options.clone(),
         |settings| settings.pdf_backend.label().to_owned(),
         |settings, value| {
             settings.pdf_backend = PdfBackend::options()
@@ -284,14 +350,20 @@ fn parsing_group(settings: &Entity<RagSettings>) -> SettingGroup {
                 .find(|(backend, _)| backend.label() == value)
                 .map_or(PdfBackend::Extract, |(backend, _)| *backend);
         },
-    );
-    let sloppy_pdf = switch_field(
+    )
+    .description("Primary parser for PDF documents.");
+    let sloppy_pdf = switch_row(
         settings,
+        changes,
+        spec("rag-sloppy-pdf", RagField::SloppyPdf, "Sloppy fallback"),
         |settings| settings.sloppy_pdf,
         |settings, value| settings.sloppy_pdf = value,
-    );
-    let chunk_size = number_field(
+    )
+    .description("Keep the panic-free PDF scavenger as a fallback.");
+    let chunk_size = number_row(
         settings,
+        changes,
+        spec("rag-chunk-size", RagField::ChunkSize, "Chunk size"),
         NumberFieldOptions {
             min: 16.0,
             max: 32_768.0,
@@ -300,8 +372,10 @@ fn parsing_group(settings: &Entity<RagSettings>) -> SettingGroup {
         |settings| settings.chunk_size as f64,
         |settings, value| settings.chunk_size = value.round().clamp(16.0, 32_768.0) as usize,
     );
-    let chunk_overlap = number_field(
+    let chunk_overlap = number_row(
         settings,
+        changes,
+        spec("rag-chunk-overlap", RagField::ChunkOverlap, "Chunk overlap"),
         NumberFieldOptions {
             min: 0.0,
             max: 8_192.0,
@@ -313,38 +387,46 @@ fn parsing_group(settings: &Entity<RagSettings>) -> SettingGroup {
         },
     );
 
-    SettingGroup::new()
-        .title("Parsing and chunking")
-        .item(
-            SettingItem::new("PDF backend", pdf_backend)
-                .description("Primary parser for PDF documents."),
-        )
-        .item(
-            SettingItem::new("Sloppy fallback", sloppy_pdf)
-                .description("Keep the panic-free PDF scavenger as a fallback."),
-        )
-        .item(SettingItem::new("Chunk size", chunk_size))
-        .item(SettingItem::new("Chunk overlap", chunk_overlap))
-        .footer(|_, cx| {
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child("Changing chunking only affects new ingestion, not stored chunks.")
-        })
+    mark_group(
+        SettingGroup::new()
+            .title(group_title(
+                "Parsing and chunking",
+                now.section(RagSection::Parsing),
+            ))
+            .item(pdf_backend.into_item())
+            .item(sloppy_pdf.into_item())
+            .item(chunk_size.into_item())
+            .item(chunk_overlap.into_item())
+            .footer(|_, cx| {
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Changing chunking only affects new ingestion, not stored chunks.")
+            }),
+        now,
+        RagSection::Parsing,
+    )
 }
 
-fn memory_group(settings: &Entity<RagSettings>) -> SettingGroup {
-    let memory = dropdown_field(
+fn memory_group(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    now: &RagChanges,
+) -> SettingGroup {
+    let memory_options: Vec<(SharedString, SharedString)> = MemoryChoice::options()
+        .iter()
+        .map(|(choice, label)| {
+            (
+                SharedString::from(choice.label()),
+                SharedString::from(*label),
+            )
+        })
+        .collect();
+    let memory = dropdown_row(
         settings,
-        MemoryChoice::options()
-            .iter()
-            .map(|(choice, label)| {
-                (
-                    SharedString::from(choice.label()),
-                    SharedString::from(*label),
-                )
-            })
-            .collect(),
+        changes,
+        spec("rag-memory", RagField::Memory, "Strategy"),
+        move |_| memory_options.clone(),
         |settings| settings.memory.label().to_owned(),
         |settings, value| {
             settings.memory = MemoryChoice::options()
@@ -353,63 +435,70 @@ fn memory_group(settings: &Entity<RagSettings>) -> SettingGroup {
                 .map_or(MemoryChoice::Rewrite, |(choice, _)| *choice);
         },
     );
-    let memory_model = input_field(
+    let memory_model = text_row(
         settings,
+        changes,
+        spec("rag-memory-model", RagField::MemoryModel, "Memory model"),
         |settings| settings.memory_model.clone(),
         |settings, value| settings.memory_model = value,
-    );
+    )
+    .description("Small local model used for rewriting and summaries.");
 
-    SettingGroup::new()
-        .title("Memory")
-        .item(SettingItem::new("Strategy", memory))
-        .item(
-            SettingItem::new("Memory model", memory_model)
-                .description("Small local model used for rewriting and summaries."),
-        )
+    mark_group(
+        SettingGroup::new()
+            .title(group_title("Memory", now.section(RagSection::Memory)))
+            .item(memory.into_item())
+            .item(memory_model.into_item()),
+        now,
+        RagSection::Memory,
+    )
 }
 
-/// Reference ingestion fields, for a host's Library page.
-#[cfg(feature = "grobid")]
-pub fn rag_references_group(settings: &Entity<RagSettings>) -> SettingGroup {
-    let grobid_url = input_field(
+/// The reference-ingestion group for a host's library page.
+pub fn rag_references_group(settings: &Entity<RagSettings>, changes: &Changes) -> SettingGroup {
+    let grobid_url = text_row(
         settings,
+        changes,
+        spec("rag-grobid-url", RagField::GrobidUrl, "GROBID server"),
         |settings| settings.grobid_url.clone(),
         |settings, value| settings.grobid_url = value,
-    );
-    let rename_pdfs = switch_field(
+    )
+    .description("Used when parsing a folder's PDFs into the bibliography.");
+    let rename_pdfs = switch_row(
         settings,
+        changes,
+        spec("rag-rename-pdfs", RagField::RenamePdfs, "Rename PDFs"),
         |settings| settings.rename_pdfs,
         |settings, value| settings.rename_pdfs = value,
-    );
-    let openalex = switch_field(
+    )
+    .description("Rename processed PDFs to Key - Authors - Title - Year.");
+    let openalex = switch_row(
         settings,
+        changes,
+        spec("rag-openalex", RagField::OpenAlex, "OpenAlex completion"),
         |settings| settings.openalex,
         |settings, value| settings.openalex = value,
-    );
-    let resolve_citations = switch_field(
+    )
+    .description("Fill missing DOI and venue data from OpenAlex.");
+    let resolve_citations = switch_row(
         settings,
+        changes,
+        spec(
+            "rag-resolve-citations",
+            RagField::ResolveCitations,
+            "Use @key citations",
+        ),
         |settings| settings.resolve_citations,
         |settings, value| settings.resolve_citations = value,
-    );
+    )
+    .description("Parse @key papers in a question and attach them as context.");
 
     SettingGroup::new()
         .title("References")
-        .item(
-            SettingItem::new("GROBID server", grobid_url)
-                .description("Used when parsing a folder's PDFs into the bibliography."),
-        )
-        .item(
-            SettingItem::new("Rename PDFs", rename_pdfs)
-                .description("Rename processed PDFs to Key - Authors - Title - Year."),
-        )
-        .item(
-            SettingItem::new("OpenAlex completion", openalex)
-                .description("Fill missing DOI and venue data from OpenAlex."),
-        )
-        .item(
-            SettingItem::new("Use @key citations", resolve_citations)
-                .description("Parse @key papers in a question and attach them as context."),
-        )
+        .item(grobid_url.into_item())
+        .item(rename_pdfs.into_item())
+        .item(openalex.into_item())
+        .item(resolve_citations.into_item())
         .footer(|_, cx| {
             div()
                 .text_xs()
@@ -593,6 +682,186 @@ fn apply_row(
         .into_any_element()
 }
 
+/// The page title, with a bullet while a section has unsaved changes.
+pub(crate) fn group_title(label: &str, dirty: bool) -> SharedString {
+    if dirty {
+        format!("{label} ●").into()
+    } else {
+        SharedString::from(label)
+    }
+}
+
+/// Append the "unsaved changes" footer to a group that differs from the agent.
+fn mark_group(group: SettingGroup, now: &RagChanges, section: RagSection) -> SettingGroup {
+    if !now.section(section) {
+        return group;
+    }
+    group.footer(|_, cx| {
+        div()
+            .text_xs()
+            .font_weight(FontWeight::BOLD)
+            .text_color(dirty_color(cx))
+            .child("● Unsaved changes — press Apply on Overview")
+    })
+}
+
+/// The identity of one settings row: its keyed-state key, change field, and
+/// visible title.
+#[derive(Clone, Copy)]
+struct FieldSpec {
+    key: &'static str,
+    field: RagField,
+    title: &'static str,
+}
+
+fn spec(key: &'static str, field: RagField, title: &'static str) -> FieldSpec {
+    FieldSpec { key, field, title }
+}
+
+fn dirty(changes: &Changes, field: RagField) -> impl Fn(&App) -> bool + 'static {
+    let changes = changes.clone();
+    move |cx| changes(cx).contains(field)
+}
+
+fn text_row<R, W>(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    spec: FieldSpec,
+    read: R,
+    write: W,
+) -> SettingRow
+where
+    R: Fn(&RagSettings) -> String + 'static,
+    W: Fn(&mut RagSettings, String) + 'static,
+{
+    let reader = settings.clone();
+    let writer = settings.clone();
+    let control = text_control(
+        spec.key,
+        move |cx| read(reader.read(cx)),
+        move |value, cx| {
+            writer.update(cx, |settings, cx| {
+                write(settings, value);
+                cx.notify();
+            });
+        },
+    );
+    SettingRow::new(spec.title, control).dirty(dirty(changes, spec.field))
+}
+
+fn number_row<R, W>(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    spec: FieldSpec,
+    options: NumberFieldOptions,
+    read: R,
+    write: W,
+) -> SettingRow
+where
+    R: Fn(&RagSettings) -> f64 + 'static,
+    W: Fn(&mut RagSettings, f64) + 'static,
+{
+    let reader = settings.clone();
+    let writer = settings.clone();
+    let control = number_control(
+        spec.key,
+        options,
+        move |cx| read(reader.read(cx)),
+        move |value, cx| {
+            writer.update(cx, |settings, cx| {
+                write(settings, value);
+                cx.notify();
+            });
+        },
+    );
+    SettingRow::new(spec.title, control).dirty(dirty(changes, spec.field))
+}
+
+fn switch_row<R, W>(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    spec: FieldSpec,
+    read: R,
+    write: W,
+) -> SettingRow
+where
+    R: Fn(&RagSettings) -> bool + 'static,
+    W: Fn(&mut RagSettings, bool) + 'static,
+{
+    let reader = settings.clone();
+    let writer = settings.clone();
+    let control = switch_control(
+        spec.key,
+        move |cx| read(reader.read(cx)),
+        move |value, cx| {
+            writer.update(cx, |settings, cx| {
+                write(settings, value);
+                cx.notify();
+            });
+        },
+    );
+    SettingRow::new(spec.title, control).dirty(dirty(changes, spec.field))
+}
+
+fn dropdown_row<O, R, W>(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    spec: FieldSpec,
+    options: O,
+    read: R,
+    write: W,
+) -> SettingRow
+where
+    O: Fn(&App) -> Vec<(SharedString, SharedString)> + 'static,
+    R: Fn(&RagSettings) -> String + 'static,
+    W: Fn(&mut RagSettings, String) + 'static,
+{
+    let reader = settings.clone();
+    let writer = settings.clone();
+    let control = dropdown_control(
+        spec.key,
+        options,
+        move |cx| read(reader.read(cx)),
+        move |value, cx| {
+            writer.update(cx, |settings, cx| {
+                write(settings, value);
+                cx.notify();
+            });
+        },
+    );
+    SettingRow::new(spec.title, control).dirty(dirty(changes, spec.field))
+}
+
+fn token_row<R, W>(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    spec: FieldSpec,
+    min_exponent: u32,
+    max_exponent: u32,
+    read: R,
+    write: W,
+) -> SettingRow
+where
+    R: Fn(&RagSettings) -> usize + 'static,
+    W: Fn(&mut RagSettings, usize) + 'static,
+{
+    let reader = settings.clone();
+    let writer = settings.clone();
+    let control = token_control(
+        spec.key,
+        min_exponent,
+        max_exponent,
+        move |cx| read(reader.read(cx)),
+        move |value, cx| {
+            writer.update(cx, |settings, cx| {
+                write(settings, value);
+                cx.notify();
+            });
+        },
+    );
+    SettingRow::new(spec.title, control).dirty(dirty(changes, spec.field))
+}
+
 fn profile_options(settings: &Entity<RagSettings>, cx: &App) -> Vec<(SharedString, SharedString)> {
     settings
         .read(cx)
@@ -624,52 +893,6 @@ where
         move |value: SharedString, cx: &mut App| {
             writer.update(cx, |settings, cx| {
                 write(settings, value.to_string());
-                cx.notify();
-            });
-        },
-    )
-}
-
-fn number_field<R, W>(
-    settings: &Entity<RagSettings>,
-    options: NumberFieldOptions,
-    read: R,
-    write: W,
-) -> impl AnySettingField + use<R, W>
-where
-    R: Fn(&RagSettings) -> f64 + 'static,
-    W: Fn(&mut RagSettings, f64) + 'static,
-{
-    let reader = settings.clone();
-    let writer = settings.clone();
-    SettingField::number_input(
-        options,
-        move |cx: &App| read(reader.read(cx)),
-        move |value: f64, cx: &mut App| {
-            writer.update(cx, |settings, cx| {
-                write(settings, value);
-                cx.notify();
-            });
-        },
-    )
-}
-
-fn switch_field<R, W>(
-    settings: &Entity<RagSettings>,
-    read: R,
-    write: W,
-) -> impl AnySettingField + use<R, W>
-where
-    R: Fn(&RagSettings) -> bool + 'static,
-    W: Fn(&mut RagSettings, bool) + 'static,
-{
-    let reader = settings.clone();
-    let writer = settings.clone();
-    SettingField::switch(
-        move |cx: &App| read(reader.read(cx)),
-        move |value: bool, cx: &mut App| {
-            writer.update(cx, |settings, cx| {
-                write(settings, value);
                 cx.notify();
             });
         },

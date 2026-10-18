@@ -1,6 +1,7 @@
 //! Editable Ragrig configuration for the settings page and profiles.
 
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -243,6 +244,282 @@ impl Default for RagSettings {
         let mut settings = Self::from_config(&config);
         settings.workspace = default_workspace().to_string_lossy().into_owned();
         settings
+    }
+}
+
+/// One editable RAG setting.
+///
+/// The settings page uses this to mark exactly the fields that differ from the
+/// configuration last applied to the worker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RagField {
+    /// Workspace folder.
+    Workspace,
+    /// Bibliography path.
+    Bibliography,
+    /// Chat backend.
+    Provider,
+    /// Ollama chat model.
+    OllamaModel,
+    /// DeepSeek chat model.
+    DeepseekModel,
+    /// Sampling temperature.
+    Temperature,
+    /// Maximum generated tokens.
+    MaxTokens,
+    /// Chat context window.
+    ContextTokens,
+    /// Streaming responses.
+    Stream,
+    /// System prompt.
+    SystemPrompt,
+    /// Embedding model.
+    EmbedModel,
+    /// Retrieved chunks.
+    TopK,
+    /// Minimum similarity.
+    SimilarityThreshold,
+    /// Named folder corpora.
+    CorpusDirs,
+    /// PDF parser backend.
+    PdfBackend,
+    /// Sloppy PDF fallback.
+    SloppyPdf,
+    /// Chunk size.
+    ChunkSize,
+    /// Chunk overlap.
+    ChunkOverlap,
+    /// Memory strategy.
+    Memory,
+    /// Memory model.
+    MemoryModel,
+    /// GROBID server.
+    GrobidUrl,
+    /// Rename processed PDFs.
+    RenamePdfs,
+    /// OpenAlex completion.
+    OpenAlex,
+    /// `@key` citation resolution.
+    ResolveCitations,
+}
+
+impl RagField {
+    /// The group this field is shown in.
+    pub fn section(self) -> RagSection {
+        match self {
+            Self::Workspace | Self::Bibliography => RagSection::Workspace,
+            Self::Provider
+            | Self::OllamaModel
+            | Self::DeepseekModel
+            | Self::Temperature
+            | Self::MaxTokens
+            | Self::ContextTokens
+            | Self::Stream
+            | Self::SystemPrompt => RagSection::Chat,
+            Self::EmbedModel | Self::TopK | Self::SimilarityThreshold | Self::CorpusDirs => {
+                RagSection::Retrieval
+            }
+            Self::PdfBackend | Self::SloppyPdf | Self::ChunkSize | Self::ChunkOverlap => {
+                RagSection::Parsing
+            }
+            Self::Memory | Self::MemoryModel => RagSection::Memory,
+            Self::GrobidUrl | Self::RenamePdfs | Self::OpenAlex | Self::ResolveCitations => {
+                RagSection::References
+            }
+        }
+    }
+}
+
+/// A group of settings shown on one page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RagSection {
+    /// Workspace folder and bibliography.
+    Workspace,
+    /// Provider, models, generation, and prompt.
+    Chat,
+    /// Embedding and retrieval.
+    Retrieval,
+    /// Parser and chunking.
+    Parsing,
+    /// Memory strategy and model.
+    Memory,
+    /// GROBID, renaming, OpenAlex, and citations.
+    References,
+}
+
+impl RagSection {
+    /// Every section, in page order.
+    pub const ALL: [Self; 6] = [
+        Self::Workspace,
+        Self::Chat,
+        Self::Retrieval,
+        Self::Parsing,
+        Self::Memory,
+        Self::References,
+    ];
+
+    /// The human-readable section name.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Workspace => "Workspace",
+            Self::Chat => "Chat",
+            Self::Retrieval => "Retrieval",
+            Self::Parsing => "Parsing and chunking",
+            Self::Memory => "Memory",
+            Self::References => "References",
+        }
+    }
+}
+
+/// The editable fields that differ from the applied configuration.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RagChanges {
+    fields: BTreeSet<RagField>,
+}
+
+impl RagChanges {
+    /// Whether no setting changed.
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
+    /// Whether any setting changed.
+    pub fn any(&self) -> bool {
+        !self.is_empty()
+    }
+
+    /// Whether one field changed.
+    pub fn contains(&self, field: RagField) -> bool {
+        self.fields.contains(&field)
+    }
+
+    /// Whether any field in a section changed.
+    pub fn section(&self, section: RagSection) -> bool {
+        self.fields.iter().any(|field| field.section() == section)
+    }
+
+    /// How many fields in a section changed.
+    pub fn count_in(&self, section: RagSection) -> usize {
+        self.fields
+            .iter()
+            .filter(|field| field.section() == section)
+            .count()
+    }
+
+    /// The number of changed fields.
+    pub fn len(&self) -> usize {
+        self.fields.len()
+    }
+
+    /// Iterate over the changed fields in declaration order.
+    pub fn fields(&self) -> impl Iterator<Item = RagField> + '_ {
+        self.fields.iter().copied()
+    }
+
+    fn mark_if(&mut self, changed: bool, field: RagField) {
+        if changed {
+            self.fields.insert(field);
+        }
+    }
+}
+
+impl RagSettings {
+    /// Compare the editable configuration fields with the configuration that is
+    /// currently running. Profile bookkeeping is ignored.
+    pub fn dirty_since(&self, applied: &Self) -> RagChanges {
+        let mut changes = RagChanges::default();
+        changes.mark_if(self.workspace != applied.workspace, RagField::Workspace);
+        changes.mark_if(
+            self.bibliography != applied.bibliography,
+            RagField::Bibliography,
+        );
+        changes.mark_if(self.provider != applied.provider, RagField::Provider);
+        changes.mark_if(
+            self.ollama_model != applied.ollama_model,
+            RagField::OllamaModel,
+        );
+        changes.mark_if(
+            self.deepseek_model != applied.deepseek_model,
+            RagField::DeepseekModel,
+        );
+        changes.mark_if(
+            self.temperature != applied.temperature,
+            RagField::Temperature,
+        );
+        changes.mark_if(self.max_tokens != applied.max_tokens, RagField::MaxTokens);
+        changes.mark_if(
+            self.context_tokens != applied.context_tokens,
+            RagField::ContextTokens,
+        );
+        changes.mark_if(self.stream != applied.stream, RagField::Stream);
+        changes.mark_if(
+            self.system_prompt != applied.system_prompt,
+            RagField::SystemPrompt,
+        );
+        changes.mark_if(
+            self.embed_model != applied.embed_model,
+            RagField::EmbedModel,
+        );
+        changes.mark_if(self.top_k != applied.top_k, RagField::TopK);
+        changes.mark_if(
+            self.similarity_threshold != applied.similarity_threshold,
+            RagField::SimilarityThreshold,
+        );
+        changes.mark_if(
+            self.corpus_dirs != applied.corpus_dirs,
+            RagField::CorpusDirs,
+        );
+        changes.mark_if(
+            self.pdf_backend != applied.pdf_backend,
+            RagField::PdfBackend,
+        );
+        changes.mark_if(self.sloppy_pdf != applied.sloppy_pdf, RagField::SloppyPdf);
+        changes.mark_if(self.chunk_size != applied.chunk_size, RagField::ChunkSize);
+        changes.mark_if(
+            self.chunk_overlap != applied.chunk_overlap,
+            RagField::ChunkOverlap,
+        );
+        changes.mark_if(self.memory != applied.memory, RagField::Memory);
+        changes.mark_if(
+            self.memory_model != applied.memory_model,
+            RagField::MemoryModel,
+        );
+        changes.mark_if(self.grobid_url != applied.grobid_url, RagField::GrobidUrl);
+        changes.mark_if(
+            self.rename_pdfs != applied.rename_pdfs,
+            RagField::RenamePdfs,
+        );
+        changes.mark_if(self.openalex != applied.openalex, RagField::OpenAlex);
+        changes.mark_if(
+            self.resolve_citations != applied.resolve_citations,
+            RagField::ResolveCitations,
+        );
+        changes
+    }
+
+    /// Reset the editable fields to the defaults of the last chosen profile.
+    ///
+    /// With no profile selected, the compiled defaults are used while keeping
+    /// the workspace, bibliography, and profile bookkeeping so the library
+    /// location is not lost.
+    pub fn reset_to_profile_defaults(&mut self) -> Result<(), String> {
+        let name = self.profile_name.trim().to_owned();
+        if !name.is_empty() && self.profiles.iter().any(|profile| profile == &name) {
+            return self.load_profile(&name);
+        }
+
+        let workspace = self.workspace.clone();
+        let bibliography = self.bibliography.clone();
+        let mut defaults = Self {
+            workspace,
+            bibliography,
+            profile_name: self.profile_name.clone(),
+            ..Self::default()
+        };
+        defaults.refresh_profiles();
+        defaults.status = Some("Reset to built-in defaults — press Apply".to_owned());
+        *self = defaults;
+        Ok(())
     }
 }
 
@@ -691,6 +968,170 @@ mod tests {
         settings.add_corpus("papers", Path::new("/docs/a"));
         settings.add_corpus("papers", Path::new("/docs/b"));
         assert_eq!(settings.corpus_dirs, vec!["papers=/docs/b".to_owned()]);
+    }
+
+    #[test]
+    fn changes_name_changed_fields_and_their_sections() {
+        let applied = fixture();
+        let mut settings = applied.clone();
+        assert!(settings.dirty_since(&applied).is_empty());
+
+        settings.max_tokens = applied.max_tokens * 2;
+        settings.chunk_size = applied.chunk_size * 2;
+        settings.openalex = !applied.openalex;
+        let changes = settings.dirty_since(&applied);
+
+        assert!(changes.contains(RagField::MaxTokens));
+        assert!(changes.contains(RagField::ChunkSize));
+        assert!(changes.contains(RagField::OpenAlex));
+        assert!(!changes.contains(RagField::Provider));
+        assert_eq!(changes.len(), 3);
+        assert!(changes.section(RagSection::Chat));
+        assert!(changes.section(RagSection::Parsing));
+        assert!(changes.section(RagSection::References));
+        assert!(!changes.section(RagSection::Memory));
+        assert_eq!(changes.count_in(RagSection::Chat), 1);
+        assert_eq!(changes.count_in(RagSection::Parsing), 1);
+        assert_eq!(changes.count_in(RagSection::Memory), 0);
+    }
+
+    #[test]
+    fn every_editable_field_is_tracked() {
+        type FieldMutation = (RagField, fn(&mut RagSettings));
+        let applied = fixture();
+        let mutators: &[FieldMutation] = &[
+            (RagField::Workspace, |settings| {
+                settings.workspace.push_str("/elsewhere")
+            }),
+            (RagField::Bibliography, |settings| {
+                settings.bibliography.push_str("/other.bib")
+            }),
+            (RagField::Provider, |settings| {
+                settings.provider = ChatProvider::DeepSeek
+            }),
+            (RagField::OllamaModel, |settings| {
+                settings.ollama_model.push_str("-alt")
+            }),
+            (RagField::DeepseekModel, |settings| {
+                settings.deepseek_model.push_str("-alt")
+            }),
+            (RagField::Temperature, |settings| {
+                settings.temperature += 0.1
+            }),
+            (RagField::MaxTokens, |settings| settings.max_tokens *= 2),
+            (RagField::ContextTokens, |settings| {
+                settings.context_tokens *= 2
+            }),
+            (RagField::Stream, |settings| {
+                settings.stream = !settings.stream
+            }),
+            (RagField::SystemPrompt, |settings| {
+                settings.system_prompt.push_str(" Be terse.")
+            }),
+            (RagField::EmbedModel, |settings| {
+                settings.embed_model.push_str("-alt")
+            }),
+            (RagField::TopK, |settings| settings.top_k += 1),
+            (RagField::SimilarityThreshold, |settings| {
+                settings.similarity_threshold += 0.01
+            }),
+            (RagField::CorpusDirs, |settings| {
+                settings.corpus_dirs.push("lab=/docs/lab".to_owned())
+            }),
+            (RagField::PdfBackend, |settings| {
+                settings.pdf_backend = PdfBackend::Sink
+            }),
+            (RagField::SloppyPdf, |settings| {
+                settings.sloppy_pdf = !settings.sloppy_pdf
+            }),
+            (RagField::ChunkSize, |settings| settings.chunk_size += 16),
+            (RagField::ChunkOverlap, |settings| {
+                settings.chunk_overlap += 8
+            }),
+            (RagField::Memory, |settings| {
+                settings.memory = MemoryChoice::Off
+            }),
+            (RagField::MemoryModel, |settings| {
+                settings.memory_model.push_str("-alt")
+            }),
+            (RagField::GrobidUrl, |settings| {
+                settings.grobid_url.push_str("/v2")
+            }),
+            (RagField::RenamePdfs, |settings| {
+                settings.rename_pdfs = !settings.rename_pdfs
+            }),
+            (RagField::OpenAlex, |settings| {
+                settings.openalex = !settings.openalex
+            }),
+            (RagField::ResolveCitations, |settings| {
+                settings.resolve_citations = !settings.resolve_citations
+            }),
+        ];
+
+        for (field, mutate) in mutators {
+            let mut settings = applied.clone();
+            mutate(&mut settings);
+            let changes = settings.dirty_since(&applied);
+            assert!(
+                changes.contains(*field),
+                "{field:?} is not part of the change set"
+            );
+            assert_eq!(changes.len(), 1, "{field:?} changed more than one field");
+            assert!(
+                changes.section(field.section()),
+                "{field:?} did not mark its section"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_bookkeeping_is_not_a_change() {
+        let applied = fixture();
+        let mut settings = applied.clone();
+        settings.profile_name = "lab".to_owned();
+        settings.profiles = vec!["lab".to_owned()];
+        settings.status = Some("Saved profile 'lab'".to_owned());
+
+        assert!(settings.dirty_since(&applied).is_empty());
+    }
+
+    #[test]
+    fn profile_defaults_reload_the_selected_profile() {
+        let workspace = unique_temp_dir("ragrig-gpui-defaults");
+        let mut settings = fixture();
+        settings.workspace = workspace.display().to_string();
+        settings.profile_name = "lab".to_owned();
+        settings.ollama_model = "qwen3.5:9b".to_owned();
+        settings.top_k = 42;
+        settings.save_profile().expect("save profile");
+
+        settings.ollama_model = "scratch".to_owned();
+        settings.top_k = 3;
+        settings.reset_to_profile_defaults().expect("reset");
+
+        assert_eq!(settings.ollama_model, "qwen3.5:9b");
+        assert_eq!(settings.top_k, 42);
+        assert_eq!(settings.workspace, workspace.display().to_string());
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn profile_defaults_without_a_profile_keep_the_library_location() {
+        let mut settings = fixture();
+        settings.workspace = "/tmp/sciscraper-workspace".to_owned();
+        settings.bibliography = "/tmp/sciscraper.bib".to_owned();
+        settings.profile_name.clear();
+        settings.top_k = 3;
+        settings.temperature = 1.7;
+
+        settings.reset_to_profile_defaults().expect("reset");
+
+        let defaults = RagSettings::default();
+        assert_eq!(settings.top_k, defaults.top_k);
+        assert_eq!(settings.temperature, defaults.temperature);
+        assert_eq!(settings.workspace, "/tmp/sciscraper-workspace");
+        assert_eq!(settings.bibliography, "/tmp/sciscraper.bib");
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {

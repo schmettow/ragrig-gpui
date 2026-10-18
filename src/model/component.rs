@@ -46,9 +46,9 @@ impl ComponentKind {
         match self {
             Self::Chat => IconName::Bot,
             Self::Embedder => IconName::Cpu,
-            Self::Store => IconName::Database,
+            Self::Store => IconName::Layers,
             Self::Parser => IconName::FileText,
-            Self::Chunker => IconName::Scissors,
+            Self::Chunker => IconName::Columns3,
             Self::Retriever => IconName::Search,
             Self::Vision => IconName::Eye,
             Self::References => IconName::BookOpen,
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn kinds_have_labels_and_icons() {
         assert_eq!(ComponentKind::Chat.label(), "Chat model");
-        assert_eq!(ComponentKind::Store.icon(), IconName::Database);
+        assert_eq!(ComponentKind::Store.icon(), IconName::Layers);
         assert_eq!(ComponentKind::References.label(), "References");
         assert_eq!(ComponentKind::References.icon(), IconName::BookOpen);
     }

@@ -5,6 +5,40 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `RagField`, `RagSection`, and `RagChanges`: field-level pending-change
+  tracking. `RagSettings::dirty_since(&applied)` reports the changed fields,
+  and `RagChanges` answers per-field and per-section questions.
+- `RagSettings::reset_to_profile_defaults()` reloads the selected profile, or
+  restores the built-in defaults while preserving the workspace and
+  bibliography.
+- `SettingRow` with `dirty_color` and `dirty_header`: a settings row whose title
+  becomes bold violet while the value differs from the applied configuration.
+- Reusable row controls: `text_control`, `number_control`, `switch_control`,
+  `dropdown_control`, `path_control`, and `token_control`.
+- `rag_model_page` and `rag_references_group` take a `Changes` closure so hosts
+  can show unsaved marks; `no_changes()` keeps the standalone use simple.
+
+### Changed
+
+- **Breaking:** `rag_model_page(settings, changes, cx)` no longer takes the
+  controller and no longer renders the Profiles and Apply groups. Hosts place
+  those on their own Overview page; `rag_settings_page` still renders the full
+  standalone page.
+- The agent bar uses `Layers` for the vector store and `Columns3` for the
+  chunker. The previous `Server` and `Hash` SVGs contain `<line>` elements that
+  the SVG rasteriser drops, which left blank icons.
+
+### Fixed
+
+- Path fields shrink to the controls column; the **Browse…** button no longer
+  clips when the settings surface is narrow.
+- Vertical rows (system prompt, folder corpora) now give their control the full
+  row width.
+
 ## v0.2.0 — 2026-10-17
 
 The first publication. The version stays at 0.2.0 because the planned 0.3.0

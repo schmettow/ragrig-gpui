@@ -797,7 +797,7 @@ impl RenderOnce for ReferenceRow {
             Button::new(ElementId::Name(
                 format!("reference-{}-copy-key", self.index).into(),
             ))
-            .icon(IconName::AtSign)
+            .icon(IconName::Copy)
             .xsmall()
             .ghost()
             .tooltip("Copy @key")
@@ -977,8 +977,8 @@ impl RenderOnce for ReferenceSelectionBar {
             let handler = handler.clone();
             let entries = self.entries.clone();
             Button::new("reference-bulk-copy-keys")
-                .icon(IconName::AtSign)
-                .xsmall()
+                .icon(IconName::Copy)
+                .small()
                 .ghost()
                 .tooltip("Copy @keys")
                 .on_click(move |_, window, cx| {
