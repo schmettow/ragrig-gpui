@@ -1,4 +1,4 @@
-//! Context formatting for the SciCo prompt.
+//! Context formatting for the Scico prompt.
 //!
 //! Ragrig's built-in strategies emit plain `[Attached: …]` blocks. Sciscraper's
 //! prompt instead documents two marked containers — `source="creator"` for

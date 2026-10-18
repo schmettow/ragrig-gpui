@@ -161,7 +161,7 @@ ragrig-gpui
   `{context}` when a prompt does not contain it. Without that placeholder,
   Ragrig has nowhere to substitute retrieved chunks or attached papers, so the
   model never sees either.
-- `SciscraperAttach` formats context with the SciCo prompt's
+- `SciscraperAttach` formats context with the Scico prompt's
   `<sciscraper:v1:context source="creator">` and `source="corpus"`
   containers. Attached `@Key` papers therefore arrive as
   `<sciscraper:v1:document name="@Key">…</sciscraper:v1:document>`, not as
@@ -174,7 +174,7 @@ ragrig-gpui
 - The same strategy budgets the context block for `context_tokens`: explicit
   attachments receive 70% of the window and retrieval the rest, so a 36k-char
   paper cannot push itself out of a 4096-token model. Shortened papers carry a
-  `<sciscraper:v1:truncated shown="…" total="…"/>` marker, which the SciCo
+  `<sciscraper:v1:truncated shown="…" total="…"/>` marker, which the Scico
   prompt already understands.
 - `rag_settings(id, settings, controller, cx)` builds the complete page;
   Apply is explicit. `rag_model_page(settings, changes, cx)` exposes the

@@ -1,7 +1,7 @@
 //! The editor-agnostic container protocol of the roundtrip.
 //!
 //! Everything the agent is shown from the editor is wrapped in a versioned,
-//! self-describing container, so the SciCo prompt can tell the author's
+//! self-describing container, so the Scico prompt can tell the author's
 //! own text apart from retrieved literature:
 //!
 //! ```text
