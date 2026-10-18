@@ -138,8 +138,10 @@ ragrig-gpui
 - `RagChat::new(window, cx, controller)` wires the M1 primitives and re-emits
   `RagChatEvent`s for status, source clicks, and copy.
 - `RagSettings::to_setup()` validates and converts to `RagrigConfig` plus a
-  prompt override, stream flag, and `@key` citation switch.
-- The worker caches a `CiteState` for the workspace bibliography and resolves
+  prompt override, stream flag, and `@key` citation switch. A non-empty
+  `bibliography` field becomes `RagSetup::bibliography`; `None` keeps the
+  conventional `<workspace>/.ragrig/references.bib`.
+- The worker caches a `CiteState` for the configured bibliography and resolves
   citations on its blocking pool before generation. A folder parsed with
   GROBID joins the citation corpora even when it was not indexed.
 - Host prompts are applied with `RagAgent::set_system_prompt`, which appends
@@ -150,7 +152,12 @@ ragrig-gpui
   `<sciscraper:v1:context source="creator">` and `source="corpus"`
   containers. Attached `@Key` papers therefore arrive as
   `<sciscraper:v1:document name="@Key">…</sciscraper:v1:document>`, not as
-  generic `[Attached: …]` blocks.
+  generic `[Attached: …]` blocks. Host-built containers (the document buffer,
+  the bibliography, a marked selection) pass through verbatim instead of being
+  wrapped a second time, so their `cursor`, `range`, and `digest` attributes
+  survive.
+- `ChatView::set_message_text` replaces a finished answer in place, so a host
+  can lift its own protocol blocks out of the transcript after the turn ends.
 - The same strategy budgets the context block for `context_tokens`: explicit
   attachments receive 70% of the window and retrieval the rest, so a 36k-char
   paper cannot push itself out of a 4096-token model. Shortened papers carry a
@@ -169,7 +176,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 69 active library tests (including nine actor tests with a fake
+Current suite: 72 library tests (including nine actor tests with a fake
 generator and embedder, context-format and budgeting tests, citation-resolution
 tests, and GPUI hover, selection and bulk-clipboard tests), 2 gallery tests, 5
 active spike tests plus one ignored typing benchmark, and 2 doctests. One

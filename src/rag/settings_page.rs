@@ -33,6 +33,11 @@ pub fn rag_settings_page(
         |settings| settings.workspace.clone(),
         |settings, value| settings.workspace = value,
     );
+    let bibliography = input_field(
+        &settings,
+        |settings| settings.bibliography.clone(),
+        |settings, value| settings.bibliography = value,
+    );
 
     let provider = dropdown_field(
         &settings,
@@ -254,7 +259,12 @@ pub fn rag_settings_page(
                 .title("Workspace")
                 .item(SettingItem::new("Workspace", workspace).description(
                     "Store, sessions, and profiles live under this folder (.ragrig).",
-                )),
+                ))
+                .item(
+                    SettingItem::new("Bibliography", bibliography).description(
+                        "The .bib the library reads and GROBID writes. Empty uses .ragrig/references.bib.",
+                    ),
+                ),
         )
         .group(
             SettingGroup::new()
@@ -349,7 +359,7 @@ pub fn rag_settings_page(
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child("Records merge into .ragrig/references.bib in the workspace.")
+                        .child("Records merge into the bibliography above (default .ragrig/references.bib).")
                 }),
         );
     }

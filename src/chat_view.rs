@@ -254,6 +254,26 @@ impl ChatView {
         true
     }
 
+    /// Replace a message's body and re-render it as stable Markdown.
+    ///
+    /// The host uses this when it lifts host-specific markup (e.g. a
+    /// Sciscraper replacement block) out of a finished answer before the
+    /// author reads it. Returns whether the message existed.
+    pub fn set_message_text(
+        &mut self,
+        id: MessageId,
+        text: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.state.update(cx, |state, _| state.set_text(id, text)) {
+            return false;
+        }
+        self.sync_text(id, cx);
+        self.remeasure_message(id, cx);
+        cx.notify();
+        true
+    }
+
     /// Replace a message's footer metadata.
     pub fn set_meta(&mut self, id: MessageId, meta: MessageMeta, cx: &mut Context<Self>) -> bool {
         if !self.state.update(cx, |state, _| state.set_meta(id, meta)) {
@@ -527,6 +547,8 @@ fn message_row(
         ChatRole::User => {
             let card = v_flex()
                 .max_w(px(720.))
+                .min_w(px(0.))
+                .flex_shrink_1()
                 .gap_2()
                 .p_3()
                 .bg(theme.secondary)

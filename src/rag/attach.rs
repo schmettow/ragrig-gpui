@@ -89,6 +89,18 @@ impl AttachStrategy for SciscraperAttach {
             let mut remaining = self.attachment_budget();
             let share = remaining / attachments.len();
             for (index, attachment) in attachments.iter().enumerate() {
+                // A pre-built protocol container (the document buffer, the
+                // bibliography, a marked selection) is inserted verbatim: the
+                // host already attached the attributes the prompt documents
+                // (cursor, range, digest), and wrapping it again would hide
+                // them inside a second `document` element.
+                if is_container(&attachment.content) {
+                    let content = attachment.content.trim_end();
+                    remaining = remaining.saturating_sub(content.chars().count());
+                    context.push_str(content);
+                    context.push('\n');
+                    continue;
+                }
                 let limit = if index + 1 == attachments.len() {
                     remaining
                 } else {
@@ -128,6 +140,15 @@ impl AttachStrategy for SciscraperAttach {
     fn name(&self) -> &'static str {
         "sciscraper"
     }
+}
+
+/// Whether `text` already is one of the protocol's containers.
+///
+/// Hosts build richer containers than [`SciscraperAttach`] itself does — the
+/// document buffer adds `cursor`, a selection adds `range` and `digest` — and
+/// hand them in as attachment content. Those must pass through untouched.
+fn is_container(text: &str) -> bool {
+    text.trim_start().starts_with("<sciscraper:v1")
 }
 
 /// Return `text` shortened to at most `max` characters, and whether it was cut.
@@ -192,6 +213,27 @@ mod tests {
             "<sciscraper:v1:context source=\"creator\">\n\
              <sciscraper:v1:document name=\"@Key\">BODY</sciscraper:v1:document>\n\
              </sciscraper:v1:context>"
+        );
+    }
+
+    #[test]
+    fn prebuilt_containers_pass_through_verbatim() {
+        let selection = "<sciscraper:v1:selection name=\"draft.md\" range=\"2..8\" chars=\"6\" digest=\"b3:abc\">\nmarked\n</sciscraper:v1:selection>";
+        let merged = SciscraperAttach::new().merge(
+            "",
+            &[document("ignored", selection), document("@Key", "PAPER")],
+        );
+
+        assert!(
+            merged.contains(selection),
+            "the richer container is kept: {merged}"
+        );
+        assert!(
+            !merged.contains("<sciscraper:v1:document name=\"ignored\">"),
+            "a container is not wrapped twice: {merged}"
+        );
+        assert!(
+            merged.contains("<sciscraper:v1:document name=\"@Key\">PAPER</sciscraper:v1:document>")
         );
     }
 

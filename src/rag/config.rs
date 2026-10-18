@@ -121,6 +121,12 @@ impl MemoryChoice {
 pub struct RagSetup {
     /// Ragrig's own configuration tree.
     pub config: RagrigConfig,
+    /// Bibliography the worker reads and writes.
+    ///
+    /// `None` uses the conventional `<workspace>/.ragrig/references.bib`.
+    /// Hosts that keep their library elsewhere set this so `@key`
+    /// citations, the reference rows, and GROBID all agree on one file.
+    pub bibliography: Option<PathBuf>,
     /// Prompt text applied after building; takes precedence over
     /// `config.chat.system_prompt_path`.
     pub system_prompt: Option<String>,
@@ -136,6 +142,7 @@ impl RagSetup {
     pub fn new(config: RagrigConfig) -> Self {
         Self {
             config,
+            bibliography: None,
             system_prompt: None,
             stream: true,
             resolve_citations: true,
@@ -146,10 +153,17 @@ impl RagSetup {
     pub fn with_system_prompt(config: RagrigConfig, prompt: impl Into<String>) -> Self {
         Self {
             config,
+            bibliography: None,
             system_prompt: Some(prompt.into()),
             stream: true,
             resolve_citations: true,
         }
+    }
+
+    /// Use `path` for the bibliography instead of the conventional file.
+    pub fn with_bibliography(mut self, path: impl Into<PathBuf>) -> Self {
+        self.bibliography = Some(path.into());
+        self
     }
 }
 
@@ -167,6 +181,10 @@ impl From<RagrigConfig> for RagSetup {
 pub struct RagSettings {
     /// Workspace folder holding the store and sessions.
     pub workspace: String,
+    /// Bibliography the library and `@key` resolution use.
+    ///
+    /// Empty means the conventional `<workspace>/.ragrig/references.bib`.
+    pub bibliography: String,
     /// Active chat backend.
     pub provider: ChatProvider,
     /// Ollama chat model.
@@ -265,6 +283,7 @@ impl RagSettings {
 
         Self {
             workspace: config.workspace.to_string_lossy().into_owned(),
+            bibliography: String::new(),
             provider,
             ollama_model: config.chat.model.clone(),
             deepseek_model: config.chat.deepseek_model.clone(),
@@ -378,6 +397,9 @@ impl RagSettings {
         };
         setup.stream = self.stream;
         setup.resolve_citations = self.resolve_citations;
+        if !self.bibliography.trim().is_empty() {
+            setup.bibliography = Some(PathBuf::from(self.bibliography.trim()));
+        }
         Ok(setup)
     }
 
@@ -576,6 +598,24 @@ mod tests {
         let mut settings = fixture();
         settings.resolve_citations = false;
         assert!(!settings.to_setup().expect("valid setup").resolve_citations);
+    }
+
+    #[test]
+    fn a_configured_bibliography_reaches_the_setup() {
+        let mut settings = fixture();
+        assert!(
+            settings
+                .to_setup()
+                .expect("valid defaults")
+                .bibliography
+                .is_none()
+        );
+
+        settings.bibliography = "  /tmp/library.bib ".to_owned();
+        assert_eq!(
+            settings.to_setup().expect("valid setup").bibliography,
+            Some(std::path::PathBuf::from("/tmp/library.bib"))
+        );
     }
 
     #[test]

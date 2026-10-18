@@ -887,13 +887,11 @@ async fn resolve_query_citations(shared: &Arc<Shared>, prompt: &str) -> Citation
 
 #[cfg(feature = "grobid")]
 fn bibliography_path(shared: &Shared) -> PathBuf {
-    shared
-        .setup
-        .lock()
-        .expect("setup")
-        .config
-        .workspace
-        .join(".ragrig/references.bib")
+    let setup = shared.setup.lock().expect("setup");
+    setup
+        .bibliography
+        .clone()
+        .unwrap_or_else(|| setup.config.workspace.join(".ragrig/references.bib"))
 }
 
 #[cfg(feature = "grobid")]

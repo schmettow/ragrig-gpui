@@ -427,6 +427,16 @@ impl ChatState {
         true
     }
 
+    /// Replace a message's body, e.g. after lifting a protocol block out of a
+    /// finished answer. Returns whether the message existed.
+    pub fn set_text(&mut self, id: MessageId, text: impl Into<String>) -> bool {
+        let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
+            return false;
+        };
+        message.text = text.into();
+        true
+    }
+
     /// Add one source to a message's footer, deduplicating by source id.
     ///
     /// Returns whether the source was added.
