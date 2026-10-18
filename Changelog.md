@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Editor roundtrip contract.** `editor::EditorSurface` describes the minimal
+  editor a host plugs in; `editor::RoundtripHost` supplies the active document,
+  selection, and guarded write-back; `editor::Roundtrip` builds the document
+  and selection containers and routes replacements. The protocol
+  (`RoundtripContext`, `Replacement`, `verified_bytes`, `replace_at`) moved here
+  from `sciscraper-gpui`, so the editor backend is now swappable.
 - `RagField`, `RagSection`, and `RagChanges`: field-level pending-change
   tracking. `RagSettings::dirty_since(&applied)` reports the changed fields,
   and `RagChanges` answers per-field and per-section questions.

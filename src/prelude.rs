@@ -7,11 +7,16 @@
 pub use crate::{
     AgentBar, AgentBarEvent, AgentComponent, Attachment, AttachmentEvent, AttachmentRows,
     ChatMessage, ChatRole, ChatSettings, ChatState, ChatView, ChatViewEvent, ComponentKind,
-    ComponentStatus, Composer, ComposerEvent, Control, EmptyState, MessageId, MessageMeta,
-    MessageState, NewMessage, SessionEntry, SessionPicker, SessionPickerEvent, SettingRow,
-    SidePanel, SourceRef, chat_settings, chat_settings_page, control, dirty_color, dirty_header,
-    dropdown_control, number_control, path_control, path_setting, switch_control, text_control,
-    token_control, token_slider,
+    ComponentStatus, Composer, ComposerEvent, ContextNote, Control, EditorBuffer, EditorSnapshot,
+    EditorSurface, EmptyState, MARKER_CONTEXT, MARKER_DOCUMENT, MARKER_LIBRARY, MARKER_REPLACE,
+    MARKER_SELECTION, MARKER_TRUNCATED, MARKERS, MAX_CONTEXT_CHARS, MessageId, MessageMeta,
+    MessageState, NewMessage, PROTOCOL, Replacement, ReplacementOutcome, ReplacementTarget,
+    Roundtrip, RoundtripContext, RoundtripHost, RoundtripKind, SelectionContext, SelectionSnapshot,
+    SessionEntry, SessionPicker, SessionPickerEvent, SettingRow, SidePanel, SourceRef,
+    byte_to_char_index, char_range_to_bytes, chat_settings, chat_settings_page, context_note,
+    control, digest, dirty_color, dirty_header, dropdown_control, missing_markers, number_control,
+    path_control, path_setting, replace_at, switch_control, text_control, token_control,
+    token_slider, verified_bytes,
 };
 
 #[cfg(feature = "ragrig")]

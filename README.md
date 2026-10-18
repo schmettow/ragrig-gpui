@@ -3,8 +3,10 @@
 Reusable [GPUI](https://gpui.rs) components for Ragrig: a streaming RAG chat,
 a Markdown transcript, source chips, attachment context, session picking, agent
 status, a full settings page, and a dedicated Tokio controller. The crate has
-no editor; Sciscraper and other hosts compose these pieces into their own
-layout.
+no editor widget; it exports the editor roundtrip contract (`editor::EditorSurface`,
+`editor::RoundtripHost`, and `editor::Roundtrip`) so Sciscraper and other hosts
+can plug in their own editor while keeping the same context containers and
+guarded write-back.
 
 Status: **M2 (RAG chat), M4 (GROBID references), and M5 (roundtrip
 experience) complete** — controller, RAG chat demo, sessions, library

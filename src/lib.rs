@@ -2,8 +2,9 @@
 //!
 //! `ragrig-gpui` packages the chat, composer, transcript, attachment, session,
 //! agent-status and settings surfaces needed to build a RAG front end. The
-//! crate contains no editor: hosting applications such as Sciscraper compose
-//! these components into their own layout.
+//! crate contains no editor widget: it exports the editor roundtrip contract
+//! ([`editor`]) so hosting applications such as Sciscraper can plug in their
+//! own editor component.
 //!
 //! # State model
 //!
@@ -29,6 +30,7 @@ mod attachments;
 mod cancel;
 mod chat_view;
 mod composer;
+pub mod editor;
 mod markdown;
 mod model;
 #[cfg(feature = "ragrig")]
@@ -47,6 +49,7 @@ pub use attachments::{AttachmentEvent, AttachmentRows};
 pub use cancel::CancelFlag;
 pub use chat_view::{ChatView, ChatViewEvent, EmptyState};
 pub use composer::{Composer, ComposerEvent};
+pub use editor::*;
 pub use markdown::stabilize_markdown;
 pub use model::*;
 #[cfg(feature = "ragrig")]
