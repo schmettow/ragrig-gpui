@@ -88,6 +88,14 @@ pub enum RagCommand {
         id: RequestId,
         /// Trimmed user prompt.
         prompt: String,
+        /// Text prepended to `prompt` before it is embedded and searched.
+        ///
+        /// This is how a host "enriches" a question with the passage the
+        /// author marked: retrieval then runs on both the passage and the
+        /// question. The worker also sends the combined text to the model, so
+        /// it sees the passage; the host transcript keeps echoing only
+        /// `prompt`.
+        retrieval: Option<String>,
         /// Context that is merged into this prompt only.
         attachments: Vec<PendingAttachment>,
     },

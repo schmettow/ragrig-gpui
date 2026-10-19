@@ -112,16 +112,36 @@ impl RagController {
         attachments: Vec<PendingAttachment>,
         cx: &mut Context<Self>,
     ) -> Result<RequestId, String> {
+        self.ask_with_retrieval(prompt, None, attachments, cx)
+    }
+
+    /// Ask one question whose retrieval is enriched with `retrieval`.
+    ///
+    /// The worker prepends `retrieval` to the prompt before embedding and
+    /// searching, so a marked passage drives the similarity search as well as
+    /// the question. An empty or whitespace-only enrichment is ignored. The
+    /// host transcript still echoes only the prompt.
+    pub fn ask_with_retrieval(
+        &mut self,
+        prompt: impl Into<String>,
+        retrieval: Option<String>,
+        attachments: Vec<PendingAttachment>,
+        cx: &mut Context<Self>,
+    ) -> Result<RequestId, String> {
         let prompt = prompt.into();
         let prompt = prompt.trim().to_owned();
         if prompt.is_empty() {
             return Err("enter a question first".to_owned());
         }
+        let retrieval = retrieval
+            .map(|text| text.trim().to_owned())
+            .filter(|text| !text.is_empty());
         let id = self.request_id();
         self.send(
             RagCommand::Ask {
                 id,
                 prompt,
+                retrieval,
                 attachments,
             },
             cx,

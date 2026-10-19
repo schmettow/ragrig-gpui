@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Retrieval enrichment.** `RagCommand::Ask` carries an optional `retrieval`
+  text and `RagController::ask_with_retrieval` sets it. The worker prepends it
+  to the prompt before embedding and searching, so a host can let a marked
+  passage drive similarity search; the host transcript still echoes only the
+  question. `RoundtripContext::text()` exposes the raw passage for this.
 - **Prompt files in `RagSettings`.** `system_prompt_path` selects a Markdown
   file that overrides the inline prompt; `built_in_prompt` carries the host's
   compiled-in default. `prompt_path()` resolves a relative path against the

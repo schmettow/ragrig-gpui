@@ -141,6 +141,7 @@ async fn handle(command: RagCommand, shared: Arc<Shared>, events: Sender<RagEven
         RagCommand::Ask {
             id,
             prompt,
+            retrieval,
             attachments,
         } => {
             if shared.syncing.load(Ordering::Acquire) {
@@ -167,7 +168,15 @@ async fn handle(command: RagCommand, shared: Arc<Shared>, events: Sender<RagEven
                 .lock()
                 .expect("cancel map")
                 .insert(id, cancel.clone());
-            tokio::spawn(run_ask(shared, id, prompt, attachments, cancel, events));
+            tokio::spawn(run_ask(
+                shared,
+                id,
+                prompt,
+                retrieval,
+                attachments,
+                cancel,
+                events,
+            ));
         }
         RagCommand::Stop { id } => {
             if let Some(cancel) = shared.cancels.lock().expect("cancel map").remove(&id) {
@@ -515,10 +524,15 @@ async fn run_ask(
     shared: Arc<Shared>,
     id: RequestId,
     prompt: String,
+    retrieval: Option<String>,
     attachments: Vec<PendingAttachment>,
     cancel: CancellationToken,
     events: Sender<RagEvent>,
 ) {
+    // Retrieval and generation share one query: the embedding model sees the
+    // marked passage and the question together, and the model sees the same
+    // text. The host transcript keeps echoing only `prompt`.
+    let query = turn_query(&prompt, retrieval.as_deref());
     if events.send(RagEvent::Started { id }).await.is_err() {
         finish_ask(&shared, id);
         return;
@@ -607,7 +621,7 @@ async fn run_ask(
         let outcome = if streaming {
             session
                 .chat_streaming_detailed_with_attachments(
-                    &prompt,
+                    &query,
                     &documents,
                     &on_token,
                     Some(&cancel),
@@ -615,7 +629,7 @@ async fn run_ask(
                 .await
         } else {
             session
-                .chat_detailed_with_attachments(&prompt, &documents)
+                .chat_detailed_with_attachments(&query, &documents)
                 .await
         };
         (outcome, model)
@@ -647,6 +661,15 @@ async fn run_ask(
     }
 
     finish_ask(&shared, id);
+}
+
+/// The query a turn runs on: the enrichment, when present, precedes the
+/// question so a marked passage shapes retrieval.
+fn turn_query(prompt: &str, retrieval: Option<&str>) -> String {
+    match retrieval.map(str::trim).filter(|text| !text.is_empty()) {
+        Some(retrieval) => format!("{retrieval}\n\n{prompt}"),
+        None => prompt.to_owned(),
+    }
 }
 
 fn finish_ask(shared: &Arc<Shared>, id: RequestId) {
@@ -1404,6 +1427,16 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn retrieval_enrichment_precedes_the_question() {
+        assert_eq!(turn_query("Why?", None), "Why?");
+        assert_eq!(turn_query("Why?", Some("  \n")), "Why?");
+        assert_eq!(
+            turn_query("Why?", Some("MARKED PASSAGE\n")),
+            "MARKED PASSAGE\n\nWhy?"
+        );
+    }
+
     #[tokio::test]
     async fn an_empty_library_still_streams_an_answer() {
         let workspace = temp_workspace("empty");
@@ -1415,6 +1448,7 @@ mod tests {
             .send(RagCommand::Ask {
                 id: RequestId::new(1),
                 prompt: "hello".to_owned(),
+                retrieval: None,
                 attachments: Vec::new(),
             })
             .await
@@ -1438,6 +1472,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_marked_passage_enriches_the_retrieval_query() {
+        let workspace = temp_workspace("enrich");
+        let (session, prompts) = test_session(&workspace, answer_chunks(), Duration::ZERO).await;
+        let (commands, events, handle) = spawn(&workspace, session);
+
+        let _ = wait_for(&events, |event| matches!(event, RagEvent::AgentReady(_))).await;
+        commands
+            .send(RagCommand::Ask {
+                id: RequestId::new(11),
+                prompt: "find related work".to_owned(),
+                retrieval: Some("A MARKED PASSAGE ABOUT CAUSALITY".to_owned()),
+                attachments: Vec::new(),
+            })
+            .await
+            .expect("send ask");
+
+        let _ = wait_for(&events, |event| matches!(event, RagEvent::Started { .. })).await;
+        loop {
+            match next_event(&events).await {
+                RagEvent::Finished { .. } => break,
+                RagEvent::Chunk { .. } | RagEvent::Sessions(_) | RagEvent::Library(_) => {}
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+
+        let prompts = prompts.lock().expect("prompts");
+        assert_eq!(prompts.len(), 1);
+        let passage = prompts[0]
+            .find("A MARKED PASSAGE ABOUT CAUSALITY")
+            .expect("the marked passage reaches the agent");
+        let question = prompts[0]
+            .find("find related work")
+            .expect("the question reaches the agent");
+        assert!(
+            passage < question,
+            "the passage must precede the question in the shared retrieval query"
+        );
+
+        drop(prompts);
+        commands.close();
+        handle.join().expect("worker thread");
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
     async fn stopping_keeps_the_partial_answer_and_frees_the_session() {
         let workspace = temp_workspace("cancel");
         let chunks = vec!["word ".to_owned(); 200];
@@ -1449,6 +1528,7 @@ mod tests {
             .send(RagCommand::Ask {
                 id: RequestId::new(7),
                 prompt: "slow".to_owned(),
+                retrieval: None,
                 attachments: Vec::new(),
             })
             .await
@@ -1494,6 +1574,7 @@ mod tests {
             .send(RagCommand::Ask {
                 id: RequestId::new(1),
                 prompt: "remember this".to_owned(),
+                retrieval: None,
                 attachments: Vec::new(),
             })
             .await
@@ -1611,6 +1692,7 @@ mod tests {
             .send(RagCommand::Ask {
                 id: RequestId::new(1),
                 prompt: "keep this turn".to_owned(),
+                retrieval: None,
                 attachments: Vec::new(),
             })
             .await
@@ -1706,6 +1788,7 @@ mod tests {
             .send(RagCommand::Ask {
                 id: RequestId::new(6),
                 prompt: "summarise @Kano2025".to_owned(),
+                retrieval: None,
                 attachments: Vec::new(),
             })
             .await
@@ -1746,6 +1829,7 @@ mod tests {
             .send(RagCommand::Ask {
                 id: RequestId::new(7),
                 prompt: "compare the two papers".to_owned(),
+                retrieval: None,
                 attachments: vec![
                     PendingAttachment::file("first", "@Kano2025", first),
                     PendingAttachment::file("second", "@Kobayashi2011", second),
@@ -1780,6 +1864,7 @@ mod tests {
             .send(RagCommand::Ask {
                 id: RequestId::new(5),
                 prompt: "summarise the selection".to_owned(),
+                retrieval: None,
                 attachments: vec![PendingAttachment::text(
                     "selection",
                     "Selection",

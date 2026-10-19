@@ -241,6 +241,15 @@ impl RoundtripContext {
         })
     }
 
+    /// The raw passage text, without the protocol container.
+    ///
+    /// Enriched retrieval uses this to embed a marked passage together with
+    /// the question.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
     /// The container as the model sees it.
     #[must_use]
     pub fn container(&self) -> String {

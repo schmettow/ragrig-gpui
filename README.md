@@ -151,6 +151,9 @@ ragrig-gpui
 ```
 
 - `RagController::new(RagSetup, cx)` starts one worker thread per controller.
+  `ask` sends one question; `ask_with_retrieval` also carries a passage that
+  the worker prepends to the query before embedding and searching. The host's
+  transcript still shows only the question.
 - `RagChat::new(window, cx, controller)` wires the M1 primitives and re-emits
   `RagChatEvent`s for status, source clicks, and copy.
 - `RagSettings::to_setup()` validates and converts to `RagrigConfig` plus a
