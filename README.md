@@ -94,9 +94,12 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
   in Settings rebuilds the agent and reloads the current saved session.
 - **Settings** (right dock): workspace, provider, models, generation, prompt,
   embeddings, retrieval, PDF backend, chunking, memory, and (with `grobid`)
-  GROBID extraction plus the **Use @key citations** switch. Workspace and
-  bibliography have **Browse…** pickers; **Maximum tokens** and **Context
-  tokens** are sliders over powers of two. **Apply** validates and rebuilds.
+  GROBID extraction plus the **Use @key citations** switch. The system prompt
+  is a Markdown file: an empty path uses the host's compiled-in prompt, and a
+  host can add **Open prompt**, **Export**, and **Use built-in** actions with
+  `PromptActions`. Workspace, bibliography, and prompt have **Browse…**
+  pickers; **Maximum tokens** and **Context tokens** are sliders over powers of
+  two. **Apply** validates and rebuilds.
   **Profiles** save/load JSON under `.ragrig/profiles`. Hosts that split the
   page can use `rag_model_page` with their own Overview/Apply row; the
   standalone `rag_settings_page` keeps Profiles and Apply.
@@ -152,8 +155,11 @@ ragrig-gpui
   `RagChatEvent`s for status, source clicks, and copy.
 - `RagSettings::to_setup()` validates and converts to `RagrigConfig` plus a
   prompt override, stream flag, and `@key` citation switch. A non-empty
-  `bibliography` field becomes `RagSetup::bibliography`; `None` keeps the
-  conventional `<workspace>/.ragrig/references.bib`.
+  `system_prompt_path` is read (relative to the workspace) and overrides the
+  inline prompt; `built_in_prompt` is restored by profile defaults and **Use
+  built-in**. A non-empty `bibliography` field becomes
+  `RagSetup::bibliography`; `None` keeps the conventional
+  `<workspace>/.ragrig/references.bib`.
 - The worker caches a `CiteState` for the configured bibliography and resolves
   citations on its blocking pool before generation. A folder parsed with
   GROBID joins the citation corpora even when it was not indexed.
@@ -177,9 +183,11 @@ ragrig-gpui
   `<sciscraper:v1:truncated shown="…" total="…"/>` marker, which the Scico
   prompt already understands.
 - `rag_settings(id, settings, controller, cx)` builds the complete page;
-  Apply is explicit. `rag_model_page(settings, changes, cx)` exposes the
-  Chat/Retrieval/Parsing/Memory groups, and `rag_references_group(settings,
-  changes)` can be added to a host's Library page. `path_setting`,
+  Apply is explicit. `rag_model_page(settings, changes, prompt, cx)` exposes
+  the Chat/Retrieval/Parsing/Memory groups; pass `Some(PromptActions)` for
+  host-owned open/export buttons or `None` for the path field alone.
+  `rag_references_group(settings, changes)` can be added to a host's Library
+  page. `path_setting`,
   `token_slider`, `SettingRow`, `dirty_color`, and `dirty_header` are exported
   for hosts that need the same pickers, 2^x token controls, or unsaved marks.
 - `RagSettings::dirty_since(&applied)` returns a `RagChanges` set of

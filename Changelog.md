@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Prompt files in `RagSettings`.** `system_prompt_path` selects a Markdown
+  file that overrides the inline prompt; `built_in_prompt` carries the host's
+  compiled-in default. `prompt_path()` resolves a relative path against the
+  workspace, `effective_prompt()` reads the selected file, and
+  `use_built_in_prompt()` clears the override. Profiles round-trip the prompt
+  file and preserve the host's built-in prompt.
+- **`PromptActions`** adds host buttons to the generic system-prompt row:
+  **Open prompt**, **Export <built-in name>**, and **Use built-in**. A host
+  supplies callbacks to open its editor and export its compiled prompt;
+  `rag_model_page` takes `Option<PromptActions>`.
 - **Editor roundtrip contract.** `editor::EditorSurface` describes the minimal
   editor a host plugs in; `editor::RoundtripHost` supplies the active document,
   selection, and guarded write-back (with the window needed by a GUI editor);
@@ -40,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `rag_model_page(settings, changes, prompt, cx)` takes an
+  optional `PromptActions` for the host buttons; `None` renders the prompt-file
+  field alone.
+- The system prompt is edited as a Markdown file instead of a single-line text
+  field. An empty path uses the host's `built_in_prompt`.
 - **Breaking:** `rag_model_page(settings, changes, cx)` no longer takes the
   controller and no longer renders the Profiles and Apply groups. Hosts place
   those on their own Overview page; `rag_settings_page` still renders the full
@@ -51,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Profile defaults and profiles without a prompt file restore the host's
+  compiled-in prompt instead of Ragrig's generic stub.
 - Path fields shrink to the controls column; the **Browse…** button no longer
   clips when the settings surface is narrow.
 - Vertical rows (system prompt, folder corpora) now give their control the full

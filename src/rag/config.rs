@@ -198,8 +198,17 @@ pub struct RagSettings {
     pub max_tokens: usize,
     /// Chat context window in tokens.
     pub context_tokens: usize,
-    /// System prompt sent before the conversation.
+    /// Inline system prompt, used when `system_prompt_path` is empty.
     pub system_prompt: String,
+    /// Markdown file that overrides the inline prompt; empty uses
+    /// `system_prompt`.
+    pub system_prompt_path: String,
+    /// The prompt the host compiles in.
+    ///
+    /// Hosts set this after loading their settings; **Use built-in** and
+    /// profile defaults restore it. It is not written to profiles and is
+    /// ignored by dirty tracking.
+    pub built_in_prompt: String,
     /// Stream tokens into the transcript.
     pub stream: bool,
     /// Ollama embedding model.
@@ -453,7 +462,8 @@ impl RagSettings {
         );
         changes.mark_if(self.stream != applied.stream, RagField::Stream);
         changes.mark_if(
-            self.system_prompt != applied.system_prompt,
+            self.system_prompt != applied.system_prompt
+                || self.system_prompt_path != applied.system_prompt_path,
             RagField::SystemPrompt,
         );
         changes.mark_if(
@@ -510,10 +520,14 @@ impl RagSettings {
 
         let workspace = self.workspace.clone();
         let bibliography = self.bibliography.clone();
+        let built_in_prompt = self.built_in_prompt.clone();
         let mut defaults = Self {
             workspace,
             bibliography,
             profile_name: self.profile_name.clone(),
+            built_in_prompt: built_in_prompt.clone(),
+            system_prompt: built_in_prompt,
+            system_prompt_path: String::new(),
             ..Self::default()
         };
         defaults.refresh_profiles();
@@ -543,7 +557,7 @@ impl RagSettings {
             MemoryStrategyKind::Off => MemoryChoice::Off,
             _ => MemoryChoice::Rewrite,
         };
-        let system_prompt = config
+        let system_prompt_path = config
             .chat
             .system_prompt_path
             .as_ref()
@@ -554,9 +568,16 @@ impl RagSettings {
                     config.workspace.join(path)
                 }
             })
-            .and_then(|path| fs::read_to_string(path).ok())
-            .filter(|text| !text.trim().is_empty())
-            .unwrap_or_else(default_prompt);
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        let system_prompt = if system_prompt_path.is_empty() {
+            default_prompt()
+        } else {
+            fs::read_to_string(&system_prompt_path)
+                .ok()
+                .filter(|text| !text.trim().is_empty())
+                .unwrap_or_else(default_prompt)
+        };
 
         Self {
             workspace: config.workspace.to_string_lossy().into_owned(),
@@ -568,6 +589,8 @@ impl RagSettings {
             max_tokens: config.chat.params.max_tokens.unwrap_or(2048),
             context_tokens: config.chat.context_tokens,
             system_prompt,
+            system_prompt_path,
+            built_in_prompt: default_prompt(),
             stream: true,
             embed_model: config.embed.model.clone(),
             top_k: config.embed.top_k,
@@ -663,10 +686,47 @@ impl RagSettings {
         })
     }
 
+    /// The custom prompt file, resolved against the workspace.
+    pub fn prompt_path(&self) -> Option<PathBuf> {
+        let path = self.system_prompt_path.trim();
+        if path.is_empty() {
+            return None;
+        }
+        let path = Path::new(path);
+        Some(if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            Path::new(self.workspace.trim()).join(path)
+        })
+    }
+
+    /// The prompt in effect: the selected file, or the inline prompt.
+    pub fn effective_prompt(&self) -> Result<String, String> {
+        match self.prompt_path() {
+            Some(path) => {
+                let text = fs::read_to_string(&path).map_err(|error| {
+                    format!("cannot read system prompt '{}': {error}", path.display())
+                })?;
+                if text.trim().is_empty() {
+                    return Err(format!("system prompt '{}' is empty", path.display()));
+                }
+                Ok(text)
+            }
+            None => Ok(self.system_prompt.clone()),
+        }
+    }
+
+    /// Clear the prompt file and restore the host's compiled-in prompt.
+    pub fn use_built_in_prompt(&mut self) {
+        self.system_prompt_path.clear();
+        self.system_prompt = self.built_in_prompt.clone();
+    }
+
     /// Validate and produce a build setup, including the prompt override.
     pub fn to_setup(&self) -> Result<RagSetup, String> {
         let config = self.to_config()?;
-        let prompt = self.system_prompt.trim();
+        let prompt = self.effective_prompt()?;
+        let prompt = prompt.trim();
         let mut setup = if prompt.is_empty() {
             RagSetup::new(config)
         } else {
@@ -778,8 +838,11 @@ impl RagSettings {
         validate_profile_name(&name)?;
         let mut config = self.to_config()?;
         let workspace = Path::new(self.workspace.trim());
-        let prompt = self.system_prompt.trim();
-        if prompt.is_empty() {
+        let prompt = self.effective_prompt()?;
+        let prompt = prompt.trim();
+        if prompt.is_empty()
+            || (self.system_prompt_path.trim().is_empty() && prompt == self.built_in_prompt.trim())
+        {
             config.chat.system_prompt_path = None;
         } else {
             let dir = RagrigConfig::profiles_dir(workspace);
@@ -806,9 +869,14 @@ impl RagSettings {
         let config = RagrigConfig::load_from_profile(workspace, name)
             .map_err(|error| format!("cannot load profile '{name}': {error:#}"))?;
         let profiles = self.profiles.clone();
+        let built_in_prompt = self.built_in_prompt.clone();
         let mut loaded = Self::from_config(&config);
         loaded.profiles = profiles;
         loaded.profile_name = name.to_owned();
+        loaded.built_in_prompt = built_in_prompt.clone();
+        if loaded.system_prompt_path.is_empty() {
+            loaded.system_prompt = built_in_prompt;
+        }
         loaded.status = Some(format!("Loaded profile '{name}' — press Apply"));
         *self = loaded;
         self.refresh_profiles();
@@ -875,6 +943,68 @@ mod tests {
         let mut settings = fixture();
         settings.resolve_citations = false;
         assert!(!settings.to_setup().expect("valid setup").resolve_citations);
+    }
+
+    #[test]
+    fn a_prompt_file_overrides_the_inline_prompt() {
+        let workspace = unique_temp_dir("ragrig-gpui-prompt-file");
+        std::fs::write(workspace.join("Scico.md"), "# Scico\n\nUse the corpus.")
+            .expect("prompt file");
+        let mut settings = fixture();
+        settings.workspace = workspace.display().to_string();
+        settings.system_prompt = "inline".to_owned();
+        settings.system_prompt_path = "Scico.md".to_owned();
+
+        assert_eq!(
+            settings.to_setup().expect("setup").system_prompt.as_deref(),
+            Some("# Scico\n\nUse the corpus.")
+        );
+        let applied = RagSettings {
+            system_prompt_path: String::new(),
+            system_prompt: "inline".to_owned(),
+            ..settings.clone()
+        };
+        assert!(
+            settings
+                .dirty_since(&applied)
+                .contains(RagField::SystemPrompt)
+        );
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn a_missing_prompt_file_is_reported() {
+        let mut settings = fixture();
+        settings.system_prompt_path = "/definitely/not/here/Scico.md".to_owned();
+        let error = settings.to_setup().expect_err("missing prompt");
+        assert!(error.contains("cannot read system prompt"), "{error}");
+    }
+
+    #[test]
+    fn using_the_built_in_prompt_clears_the_file() {
+        let mut settings = fixture();
+        settings.built_in_prompt = "Host prompt".to_owned();
+        settings.system_prompt = "File prompt".to_owned();
+        settings.system_prompt_path = "Scico.md".to_owned();
+
+        settings.use_built_in_prompt();
+
+        assert_eq!(settings.system_prompt, "Host prompt");
+        assert!(settings.system_prompt_path.is_empty());
+    }
+
+    #[test]
+    fn profile_defaults_restore_the_built_in_prompt() {
+        let mut settings = fixture();
+        settings.built_in_prompt = "Host prompt".to_owned();
+        settings.system_prompt = "Custom".to_owned();
+        settings.system_prompt_path = "custom.md".to_owned();
+
+        settings.reset_to_profile_defaults().expect("reset");
+
+        assert_eq!(settings.system_prompt, "Host prompt");
+        assert!(settings.system_prompt_path.is_empty());
     }
 
     #[test]

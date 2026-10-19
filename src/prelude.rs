@@ -21,11 +21,12 @@ pub use crate::{
 
 #[cfg(feature = "ragrig")]
 pub use crate::rag::{
-    AgentInfo, AttachmentSource, Changes, ChatProvider, IngestPhase, IngestProgress,
-    LibraryDocument, LibrarySnapshot, MemoryChoice, PdfBackend, PendingAttachment, RagChanges,
-    RagChat, RagChatEvent, RagCommand, RagController, RagEvent, RagField, RagReply, RagSection,
-    RagSettings, RagSetup, RequestId, SciscraperAttach, SessionInfo, SessionTurn, SyncSummary,
-    no_changes, rag_model_page, rag_references_group, rag_settings, rag_settings_page,
+    AgentInfo, AttachmentSource, Changes, ChatProvider, ExportPrompt, IngestPhase, IngestProgress,
+    LibraryDocument, LibrarySnapshot, MemoryChoice, OpenPrompt, PdfBackend, PendingAttachment,
+    PromptActions, RagChanges, RagChat, RagChatEvent, RagCommand, RagController, RagEvent,
+    RagField, RagReply, RagSection, RagSettings, RagSetup, RequestId, SciscraperAttach,
+    SessionInfo, SessionTurn, SyncSummary, no_changes, rag_model_page, rag_references_group,
+    rag_settings, rag_settings_page,
 };
 
 #[cfg(feature = "grobid")]

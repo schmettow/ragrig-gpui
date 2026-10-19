@@ -31,7 +31,8 @@ pub use protocol::{
     SyncSummary,
 };
 pub use settings_page::{
-    Changes, no_changes, rag_model_page, rag_references_group, rag_settings, rag_settings_page,
+    Changes, ExportPrompt, OpenPrompt, PromptActions, no_changes, rag_model_page,
+    rag_references_group, rag_settings, rag_settings_page,
 };
 
 pub(crate) fn count_label(count: usize, singular: &str, plural: &str) -> String {

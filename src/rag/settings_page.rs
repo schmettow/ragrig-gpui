@@ -9,11 +9,11 @@
 //! violet. Pass a [`Changes`] closure to report those differences; a host that
 //! does not track them can pass [`no_changes`].
 
-use std::rc::Rc;
+use std::{path::Path, rc::Rc};
 
 use gpui_kit::{
     AnyElement, App, ElementId, Entity, FontWeight, IntoElement, ParentElement as _, SharedString,
-    Styled as _,
+    Styled as _, Window,
     component::{
         ActiveTheme as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -32,8 +32,8 @@ use super::{
     RagSettings,
 };
 use crate::{
-    SettingRow, dirty_color, dirty_header, dropdown_control, number_control, path_setting,
-    switch_control, text_control, token_control,
+    SettingRow, dirty_color, dirty_header, dropdown_control, number_control, path_control,
+    path_setting, switch_control, text_control, token_control,
 };
 
 /// Reports which settings differ from the configuration applied to the worker.
@@ -42,6 +42,31 @@ pub type Changes = Rc<dyn Fn(&App) -> RagChanges>;
 /// A [`Changes`] closure for hosts that do not track pending edits.
 pub fn no_changes() -> Changes {
     Rc::new(|_| RagChanges::default())
+}
+
+/// Opens the effective prompt in the host editor.
+///
+/// `None` means no file is selected and the host should show its built-in
+/// prompt.
+pub type OpenPrompt = Rc<dyn Fn(Option<&Path>, &mut Window, &mut App)>;
+
+/// Writes the host's built-in prompt into the workspace and opens it.
+///
+/// Returns the new absolute path on success.
+pub type ExportPrompt = Rc<dyn Fn(&mut Window, &mut App) -> Result<String, String>>;
+
+/// Host actions for the system-prompt file row.
+///
+/// The generic settings page owns the path field, but only the host can open a
+/// file in its editor or write its compiled-in prompt into the workspace.
+#[derive(Clone)]
+pub struct PromptActions {
+    /// File name of the host's compiled-in prompt, used in labels and help.
+    pub built_in_name: &'static str,
+    /// Open the prompt in the host editor; `None` is the built-in prompt.
+    pub open: OpenPrompt,
+    /// Write the built-in prompt into the workspace, select it, and open it.
+    pub export: ExportPrompt,
 }
 
 /// Build the complete Ragrig settings page.
@@ -62,7 +87,7 @@ pub fn rag_settings_page(
         )
         .default_open(true)
         .group(workspace_group(&settings))
-        .group(chat_group(&settings, &changes, &now))
+        .group(chat_group(&settings, &changes, &now, None))
         .group(retrieval_group(&settings, &changes, &now))
         .group(parsing_group(&settings, &changes, &now))
         .group(memory_group(&settings, &changes, &now))
@@ -76,8 +101,15 @@ pub fn rag_settings_page(
 /// The model, retrieval, parsing, and memory groups.
 ///
 /// This is the RAG page for a host that keeps workspace, bibliography,
-/// profile management, and reference ingestion on its own pages.
-pub fn rag_model_page(settings: Entity<RagSettings>, changes: Changes, cx: &App) -> SettingPage {
+/// profile management, and reference ingestion on its own pages. Pass
+/// [`PromptActions`] to add the open and export buttons beside the prompt file
+/// field; `None` renders the path field alone.
+pub fn rag_model_page(
+    settings: Entity<RagSettings>,
+    changes: Changes,
+    prompt: Option<PromptActions>,
+    cx: &App,
+) -> SettingPage {
     let now = changes(cx);
     let page_dirty = [
         RagSection::Chat,
@@ -97,7 +129,7 @@ pub fn rag_model_page(settings: Entity<RagSettings>, changes: Changes, cx: &App)
     } else {
         page
     };
-    page.group(chat_group(&settings, &changes, &now))
+    page.group(chat_group(&settings, &changes, &now, prompt.as_ref()))
         .group(retrieval_group(&settings, &changes, &now))
         .group(parsing_group(&settings, &changes, &now))
         .group(memory_group(&settings, &changes, &now))
@@ -151,7 +183,12 @@ fn workspace_group(settings: &Entity<RagSettings>) -> SettingGroup {
         ))
 }
 
-fn chat_group(settings: &Entity<RagSettings>, changes: &Changes, now: &RagChanges) -> SettingGroup {
+fn chat_group(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    now: &RagChanges,
+    prompt: Option<&PromptActions>,
+) -> SettingGroup {
     let provider = dropdown_row(
         settings,
         changes,
@@ -228,30 +265,136 @@ fn chat_group(settings: &Entity<RagSettings>, changes: &Changes, now: &RagChange
         |settings| settings.context_tokens,
         |settings, value| settings.context_tokens = value,
     );
-    let system_prompt = text_row(
-        settings,
-        changes,
-        spec("rag-system-prompt", RagField::SystemPrompt, "System prompt"),
-        |settings| settings.system_prompt.clone(),
-        |settings, value| settings.system_prompt = value,
-    )
-    .description("Sent before every question. Applied on the next Apply.")
-    .vertical();
+    let prompt_path = path_control(
+        "rag-system-prompt-path",
+        "Choose a Markdown prompt file",
+        false,
+        true,
+        {
+            let settings = settings.clone();
+            move |cx| settings.read(cx).system_prompt_path.clone()
+        },
+        {
+            let settings = settings.clone();
+            move |value, cx| {
+                settings.update(cx, |settings, cx| {
+                    settings.system_prompt_path = value;
+                    cx.notify();
+                });
+            }
+        },
+    );
+    let built_in_name = prompt.map_or("built-in prompt", |prompt| prompt.built_in_name);
+    let system_prompt = SettingRow::new("System prompt", prompt_path)
+        .description(format!(
+            "Empty uses the {built_in_name}. A selected Markdown file overrides it; Apply rebuilds the agent."
+        ))
+        .dirty({
+            let changes = changes.clone();
+            move |cx| changes(cx).contains(RagField::SystemPrompt)
+        })
+        .into_item();
 
-    mark_group(
-        SettingGroup::new()
-            .title(group_title("Chat", now.section(RagSection::Chat)))
-            .item(provider.into_item())
-            .item(ollama_model.into_item())
-            .item(deepseek_model.into_item())
-            .item(stream.into_item())
-            .item(temperature.into_item())
-            .item(max_tokens.into_item())
-            .item(context_tokens.into_item())
-            .item(system_prompt.into_item()),
-        now,
-        RagSection::Chat,
-    )
+    let mut group = SettingGroup::new()
+        .title(group_title("Chat", now.section(RagSection::Chat)))
+        .item(provider.into_item())
+        .item(ollama_model.into_item())
+        .item(deepseek_model.into_item())
+        .item(stream.into_item())
+        .item(temperature.into_item())
+        .item(max_tokens.into_item())
+        .item(context_tokens.into_item())
+        .item(system_prompt);
+    if let Some(prompt) = prompt {
+        let settings = settings.clone();
+        let prompt = prompt.clone();
+        group = group.item(SettingItem::render(move |_, window, cx| {
+            prompt_buttons(settings.clone(), prompt.clone(), window, cx)
+        }));
+    }
+
+    mark_group(group, now, RagSection::Chat)
+}
+
+fn prompt_buttons(
+    settings: Entity<RagSettings>,
+    actions: PromptActions,
+    _: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let built_in = settings.read(cx).built_in_prompt.clone();
+    let path = settings.read(cx).system_prompt_path.clone();
+    let status = settings.read(cx).status.clone();
+    let uses_built_in =
+        path.trim().is_empty() && settings.read(cx).system_prompt.trim() == built_in.trim();
+
+    let open = {
+        let settings = settings.clone();
+        let actions = actions.clone();
+        Button::new("rag-prompt-open")
+            .label("Open prompt")
+            .icon(gpui_kit::assets::IconName::FolderOpen)
+            .small()
+            .outline()
+            .on_click(move |_, window, cx| {
+                let path = settings.read(cx).prompt_path();
+                (actions.open)(path.as_deref(), window, cx);
+            })
+    };
+    let export = {
+        let settings = settings.clone();
+        let actions = actions.clone();
+        let label = format!("Export {}", actions.built_in_name);
+        let built_in_name = actions.built_in_name;
+        Button::new("rag-prompt-export")
+            .label(label)
+            .icon(gpui_kit::assets::IconName::Save)
+            .small()
+            .outline()
+            .on_click(move |_, window, cx| match (actions.export)(window, cx) {
+                Ok(path) => settings.update(cx, |settings, cx| {
+                    settings.system_prompt_path = path;
+                    settings.status = Some(format!(
+                        "Using {built_in_name} — edit it, then press Apply to rebuild the agent"
+                    ));
+                    cx.notify();
+                }),
+                Err(message) => settings.update(cx, |settings, cx| {
+                    settings.status = Some(message);
+                    cx.notify();
+                }),
+            })
+    };
+    let reset = (!uses_built_in).then(|| {
+        let settings = settings.clone();
+        Button::new("rag-prompt-built-in")
+            .label("Use built-in")
+            .icon(gpui_kit::assets::IconName::RefreshCw)
+            .small()
+            .ghost()
+            .on_click(move |_, _, cx| {
+                settings.update(cx, |settings, cx| {
+                    settings.use_built_in_prompt();
+                    cx.notify();
+                });
+            })
+    });
+
+    h_flex()
+        .gap_2()
+        .items_center()
+        .child(open)
+        .child(export)
+        .when_some(reset, |row, reset| row.child(reset))
+        .when_some(status, |row, status| {
+            row.child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(status),
+            )
+        })
+        .into_any_element()
 }
 
 fn retrieval_group(
