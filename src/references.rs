@@ -920,6 +920,8 @@ impl RenderOnce for ReferenceRow {
 /// A bulk action offered by [`ReferenceSelectionBar`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReferenceAction {
+    /// Insert the selected `@key` mentions into the active editor.
+    Insert,
     /// Write the selected `@key` mentions to the clipboard.
     CopyKeys,
     /// Write the selected PDF paths to the clipboard.
@@ -934,10 +936,11 @@ type ActionHandler = Rc<dyn Fn(ReferenceAction, &[ReferenceEntry], &mut Window, 
 
 /// One floating bar for a multi-selection of references.
 ///
-/// The bar writes **Copy @keys** and **Copy paths** itself. **Attach** and
-/// **Clear** are shown only when a host action handler is installed; the host
-/// owns the selection and the chat, so it performs those two actions. Build the
-/// bar from the selected entries in list order and give it a stable parent.
+/// The bar writes **Copy @keys** and **Copy paths** itself. **Insert**,
+/// **Attach**, and **Clear** are shown only when a host action handler is
+/// installed; the host owns the selection, the editor, and the chat, so it
+/// performs those actions. Build the bar from the selected entries in list
+/// order and give it a stable parent.
 #[derive(IntoElement)]
 pub struct ReferenceSelectionBar {
     entries: Vec<ReferenceEntry>,
@@ -1037,10 +1040,26 @@ impl RenderOnce for ReferenceSelectionBar {
             );
 
         if handler.is_some() {
+            let insert_handler = handler.clone();
+            let insert_entries = self.entries.clone();
+            bar = bar.child(
+                Button::new("reference-bulk-insert")
+                    .label("Insert")
+                    .icon(IconName::CornerDownLeft)
+                    .xsmall()
+                    .ghost()
+                    .tooltip("Insert the selected @keys into the active document")
+                    .on_click(move |_, window, cx| {
+                        if let Some(handler) = &insert_handler {
+                            handler(ReferenceAction::Insert, &insert_entries, window, cx);
+                        }
+                    }),
+            );
             let attach_handler = handler.clone();
             let attach_entries = self.entries.clone();
             bar = bar.child(
                 Button::new("reference-bulk-attach")
+                    .label("Attach")
                     .icon(IconName::Paperclip)
                     .xsmall()
                     .ghost()
@@ -1056,6 +1075,7 @@ impl RenderOnce for ReferenceSelectionBar {
             let clear_entries = self.entries.clone();
             bar = bar.child(
                 Button::new("reference-bulk-clear")
+                    .label("Clear")
                     .icon(IconName::X)
                     .xsmall()
                     .ghost()

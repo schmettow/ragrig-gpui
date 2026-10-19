@@ -14,7 +14,7 @@ mod protocol;
 
 pub use host::{
     EditorSnapshot, EditorSurface, ReplacementOutcome, ReplacementTarget, Roundtrip, RoundtripHost,
-    SelectionContext, SelectionSnapshot,
+    SelectionContext, SelectionSnapshot, char_index_for_line_column,
 };
 pub use protocol::{
     ContextNote, EditorBuffer, MARKER_CONTEXT, MARKER_DOCUMENT, MARKER_LIBRARY, MARKER_REPLACE,

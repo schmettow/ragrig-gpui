@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and selection containers and routes replacements. The protocol
   (`RoundtripContext`, `Replacement`, `verified_bytes`, `replace_at`) moved here
   from `sciscraper-gpui`, so the editor backend is now swappable.
+- **Insertion in the editor contract.** `EditorSurface::insert_text` replaces
+  the selection or inserts at `EditorSurface::caret` as one undo step, and the
+  default `caret()` derives a character index from the snapshot's line/column.
+  Hosts implement `RoundtripHost::insert`; `Roundtrip::insert` exposes it.
+  `char_index_for_line_column` is re-exported for hosts with their own caret
+  representation. This is the Library → Editor seam.
+- `ReferenceAction::Insert`: the reference selection bar now offers insertion
+  next to attach and clear, and all three actions carry labels and visible icon
+  placeholders.
 - `RagField`, `RagSection`, and `RagChanges`: field-level pending-change
   tracking. `RagSettings::dirty_since(&applied)` reports the changed fields,
   and `RagChanges` answers per-field and per-section questions.
@@ -35,9 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   controller and no longer renders the Profiles and Apply groups. Hosts place
   those on their own Overview page; `rag_settings_page` still renders the full
   standalone page.
-- The agent bar uses `Layers` for the vector store and `Columns3` for the
+- The agent bar uses `Database` for the vector store and `Pilcrow` for the
   chunker. The previous `Server` and `Hash` SVGs contain `<line>` elements that
-  the SVG rasteriser drops, which left blank icons.
+  the SVG rasteriser drops, which left blank icons; component buttons also have
+  a tinted placeholder background so they remain visible if a glyph fails.
 
 ### Fixed
 

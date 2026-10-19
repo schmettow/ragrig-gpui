@@ -138,6 +138,8 @@ fn component_button(
                 .icon(component.kind.icon())
                 .ghost()
                 .small()
+                .rounded(px(4.))
+                .bg(theme.muted.opacity(0.18))
                 .tooltip(tooltip),
         )
         .content(move |_, _, cx| {
