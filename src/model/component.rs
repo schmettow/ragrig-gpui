@@ -142,6 +142,38 @@ mod tests {
     }
 
     #[test]
+    fn every_component_icon_draws_visible_pixels() {
+        use gpui_kit::{AssetSource as _, SvgRenderer};
+        use std::sync::Arc;
+
+        let assets = Arc::new(gpui_kit::assets::AllAssets);
+        let renderer = SvgRenderer::new(assets.clone());
+        let kinds = [
+            ComponentKind::Chat,
+            ComponentKind::Embedder,
+            ComponentKind::Store,
+            ComponentKind::Parser,
+            ComponentKind::Chunker,
+            ComponentKind::Retriever,
+            ComponentKind::Vision,
+            ComponentKind::References,
+            ComponentKind::Other,
+        ];
+        for kind in kinds {
+            let path = kind.icon().path();
+            let bytes = assets.load(&path).expect("asset load").expect("asset");
+            let parsed = renderer.parse_svg(&bytes).expect("parse svg");
+            let image = renderer.render_parsed(&parsed, 2.0f32).expect("render svg");
+            let pixels = image.as_bytes(0).expect("frame");
+            assert!(
+                pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0),
+                "{:?} ({path}) rasterised to a blank image",
+                kind
+            );
+        }
+    }
+
+    #[test]
     fn components_default_to_inactive() {
         let component = AgentComponent::new("chat", ComponentKind::Chat, "DeepSeek");
         assert_eq!(component.status, ComponentStatus::Inactive);

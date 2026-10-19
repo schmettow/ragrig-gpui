@@ -208,12 +208,12 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 79 library tests (including nine actor tests with a fake
+Current suite: 94 library tests (including ten actor tests with a fake
 generator and embedder, context-format and budgeting tests, citation-resolution
-tests, field-level pending-change tests, and GPUI hover, selection and
-bulk-clipboard tests), 2 gallery tests, 5 active spike tests plus one ignored
-typing benchmark, and 2 doctests. One GROBID end-to-end test is ignored by
-default:
+tests, field-level pending-change tests, retrieval enrichment, an icon
+rasteriser check, and GPUI hover, selection and bulk-clipboard tests), 2
+gallery tests, 5 active spike tests plus one ignored typing benchmark, and 2
+doctests. One GROBID end-to-end test is ignored by default:
 
 ```sh
 cargo test --all-features grobid_extracts_the_test_library_end_to_end \
@@ -230,6 +230,10 @@ though the Rust crates compile. Install the packages above; do not paper over
 the link error in CI.
 
 ## Notes for integrators
+
+- The examples register `gpui_kit::assets::AllAssets`. The default `Assets`
+  bundle contains only 106 icons; using `Database`, `Pilcrow`, `Save`, or
+  `Sparkles` without the full catalog leaves those buttons blank.
 
 - Depend on `gpui-kit`, never on `gpui` directly. The facade keeps the backend
   swappable and is the version contract for this crate.
@@ -260,8 +264,10 @@ the link error in CI.
   abort the question; they appear in the transcript note.
 - `ReferenceSelection` is keyed by citation key, so a refreshed list keeps the
   selection. `ReferenceRow::on_select` adds the leading **+**;
-  `ReferenceSelectionBar` performs the bulk copy actions and reports
-  **Attach** / **Clear** to the host, which owns the chat and the selection.
+  `ReferenceSelectionBar` shows `N selected · @key1, @key2`, performs the bulk
+  copy actions, and reports **Insert** / **Attach** / **Clear** to the host,
+  which owns the editor, chat, and selection. It is full width, so it works as
+  a top bar or a footer.
 - The checked-in `Cargo.lock` is intentional: `gpui-kit 0.7.3`'s optional
   `gpui-fast` branch pins `cocoa =0.26.0`, while a pre-existing lockfile may
   hold `0.26.1`. A fresh resolve succeeds; a stale one fails.

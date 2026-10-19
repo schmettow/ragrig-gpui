@@ -972,6 +972,12 @@ impl RenderOnce for ReferenceSelectionBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let count = self.entries.len();
+        let keys = self
+            .entries
+            .iter()
+            .map(|entry| entry.copy_key_text())
+            .collect::<Vec<_>>()
+            .join(", ");
         let path_text = paths_text(&self.entries);
         let paths_available = !path_text.is_empty();
         let handler = self.on_action;
@@ -980,8 +986,9 @@ impl RenderOnce for ReferenceSelectionBar {
             let handler = handler.clone();
             let entries = self.entries.clone();
             Button::new("reference-bulk-copy-keys")
+                .label("Copy keys")
                 .icon(IconName::Copy)
-                .small()
+                .xsmall()
                 .ghost()
                 .tooltip("Copy @keys")
                 .on_click(move |_, window, cx| {
@@ -996,6 +1003,7 @@ impl RenderOnce for ReferenceSelectionBar {
             let handler = handler.clone();
             let entries = self.entries.clone();
             Button::new("reference-bulk-copy-paths")
+                .label("Copy paths")
                 .icon(IconName::FileText)
                 .xsmall()
                 .ghost()
@@ -1011,22 +1019,24 @@ impl RenderOnce for ReferenceSelectionBar {
 
         let mut bar = h_flex()
             .debug_selector(|| "reference-selection-bar".to_owned())
+            .w_full()
             .items_center()
             .gap_1()
             .px_2()
             .py_1()
-            .rounded_full()
+            .rounded(theme.radius)
             .border_1()
-            .border_color(theme.primary.opacity(0.55))
-            .bg(theme.background)
-            .shadow_md()
+            .border_color(theme.primary.opacity(0.45))
+            .bg(theme.primary.opacity(0.10))
             .child(
                 div()
-                    .flex_none()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
                     .px_1()
                     .text_xs()
                     .text_color(theme.primary)
-                    .child(format!("{count} selected")),
+                    .child(format!("{count} selected · {keys}")),
             )
             .child(
                 div()

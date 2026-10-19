@@ -1021,7 +1021,7 @@ impl Render for GalleryApp {
 
 fn main() {
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(gpui_kit::assets::AllAssets)
         .run(|cx| {
             ragrig_gpui::init(cx);
 

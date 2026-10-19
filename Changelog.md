@@ -39,7 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   representation. This is the Library → Editor seam.
 - `ReferenceAction::Insert`: the reference selection bar now offers insertion
   next to attach and clear, and all three actions carry labels and visible icon
-  placeholders.
+  placeholders. The bar is full width and includes the selection summary
+  (`N selected · @key1, @key2`), so a host can place it at the top of a list.
 - `RagField`, `RagSection`, and `RagChanges`: field-level pending-change
   tracking. `RagSettings::dirty_since(&applied)` reports the changed fields,
   and `RagChanges` answers per-field and per-section questions.
@@ -65,9 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   those on their own Overview page; `rag_settings_page` still renders the full
   standalone page.
 - The agent bar uses `Database` for the vector store and `Pilcrow` for the
-  chunker. The previous `Server` and `Hash` SVGs contain `<line>` elements that
-  the SVG rasteriser drops, which left blank icons; component buttons also have
-  a tinted placeholder background so they remain visible if a glyph fails.
+  chunker; component buttons also have a tinted placeholder background. The
+  blank icons were caused by the default `gpui_kit::assets::Assets` bundle
+  omitting these files; the examples now register `AllAssets`, and
+  `every_component_icon_draws_visible_pixels` rasterises every component icon
+  as a regression test.
 
 ### Fixed
 
