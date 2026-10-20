@@ -5,12 +5,12 @@
 //! ```
 
 pub use crate::{
-    AgentBar, AgentBarEvent, AgentComponent, Attachment, AttachmentEvent, AttachmentRows,
-    ChatMessage, ChatRole, ChatSettings, ChatState, ChatView, ChatViewEvent, ComponentKind,
-    ComponentStatus, ComponentToggle, Composer, ComposerEvent, ContextNote, Control, EditorBuffer,
-    EditorSnapshot, EditorSurface, EmptyState, MARKER_CONTEXT, MARKER_DOCUMENT, MARKER_LIBRARY,
-    MARKER_REPLACE, MARKER_SELECTION, MARKER_TRUNCATED, MARKERS, MAX_CONTEXT_CHARS, MessageId,
-    MessageMeta, MessageState, NewMessage, PROTOCOL, Replacement, ReplacementOutcome,
+    AgentBar, AgentBarEvent, AgentComponent, Attachment, AttachmentEvent, AttachmentRows, ChatIcon,
+    ChatIdentity, ChatMessage, ChatRole, ChatSettings, ChatState, ChatView, ChatViewEvent,
+    ComponentKind, ComponentStatus, ComponentToggle, Composer, ComposerEvent, ContextNote, Control,
+    EditorBuffer, EditorSnapshot, EditorSurface, EmptyState, MARKER_CONTEXT, MARKER_DOCUMENT,
+    MARKER_LIBRARY, MARKER_REPLACE, MARKER_SELECTION, MARKER_TRUNCATED, MARKERS, MAX_CONTEXT_CHARS,
+    MessageId, MessageMeta, MessageState, NewMessage, PROTOCOL, Replacement, ReplacementOutcome,
     ReplacementTarget, Roundtrip, RoundtripContext, RoundtripHost, RoundtripKind, SelectionContext,
     SelectionSnapshot, SessionEntry, SessionPicker, SessionPickerEvent, SettingRow, SidePanel,
     SourceRef, byte_to_char_index, char_range_to_bytes, chat_settings, chat_settings_page,

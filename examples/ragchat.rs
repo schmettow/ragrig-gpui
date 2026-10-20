@@ -77,7 +77,7 @@ impl RagAppState {
         chat.update(cx, |chat, cx| {
             chat.set_empty_state(
                 EmptyState {
-                    icon: IconName::Sparkles,
+                    icon: IconName::Sparkles.into(),
                     title: "Ask your library".into(),
                     description: "Index a folder in the Library panel, then ask a question. \
                                   Answers stream with the documents they used. The library may \

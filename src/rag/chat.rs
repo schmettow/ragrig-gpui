@@ -16,7 +16,7 @@ use gpui_kit::{
 use crate::references::CitationAttachment;
 use crate::{
     attachments::{AttachmentEvent, AttachmentRows},
-    chat_view::{ChatView, ChatViewEvent, EmptyState},
+    chat_view::{ChatIdentity, ChatView, ChatViewEvent, EmptyState},
     composer::{Composer, ComposerEvent},
     model::{Attachment, ChatRole, MessageId, MessageMeta, NewMessage, SourceRef},
 };
@@ -97,6 +97,12 @@ impl RagChat {
     pub fn set_empty_state(&mut self, empty: EmptyState, cx: &mut Context<Self>) {
         self.chat
             .update(cx, |chat, cx| chat.set_empty_state(empty, cx));
+    }
+
+    /// Set how the assistant signs its messages.
+    pub fn set_assistant(&mut self, identity: ChatIdentity, cx: &mut Context<Self>) {
+        self.chat
+            .update(cx, |chat, cx| chat.set_assistant(identity, cx));
     }
 
     /// The transcript.

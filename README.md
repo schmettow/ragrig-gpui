@@ -157,6 +157,12 @@ ragrig-gpui
   **Chat memory** and **Hybrid retrieval** (off means `EmbedderSpec::None`, no
   embedding model, and no vector search).
 
+- `ChatView` keeps its own branding neutral: `ChatIdentity` (name plus
+  `ChatIcon`) signs assistant rows, and `ChatIcon` accepts a catalog name, an
+  asset path, or inline SVG bytes. `EmptyState` takes the same mark. This lets
+  a host such as Sciscraper show its own assistant name and logo without
+  shipping assets in this crate.
+
 - `RagController::new(RagSetup, cx)` starts one worker thread per controller.
   `ask` sends one question; `ask_with_retrieval` also carries a passage that
   the worker prepends to the query before embedding and searching. The host's
@@ -221,12 +227,13 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 94 library tests (including ten actor tests with a fake
+Current suite: 119 library tests (including ten actor tests with a fake
 generator and embedder, context-format and budgeting tests, citation-resolution
-tests, field-level pending-change tests, retrieval enrichment, an icon
-rasteriser check, and GPUI hover, selection and bulk-clipboard tests), 2
-gallery tests, 5 active spike tests plus one ignored typing benchmark, and 2
-doctests. One GROBID end-to-end test is ignored by default:
+tests, field-level pending-change tests, retrieval enrichment, catalog and
+inline-SVG rasteriser checks, agent-bar popover bounds, and GPUI hover,
+selection and bulk-clipboard tests), 2 gallery tests, 5 active spike tests plus
+one ignored typing benchmark, and 2 doctests. One GROBID end-to-end test is
+ignored by default:
 
 ```sh
 cargo test --all-features grobid_extracts_the_test_library_end_to_end \

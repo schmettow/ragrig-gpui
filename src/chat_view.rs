@@ -21,6 +21,7 @@ use gpui_kit::{
 };
 
 use crate::{
+    icon::ChatIcon,
     markdown::stabilize_markdown,
     model::{
         ChatMessage, ChatRole, ChatState, MessageId, MessageMeta, MessageState, NewMessage,
@@ -32,7 +33,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct EmptyState {
     /// Large icon above the title.
-    pub icon: IconName,
+    pub icon: ChatIcon,
     /// Heading, e.g. `Ask your library`.
     pub title: SharedString,
     /// One or two lines explaining what to do.
@@ -42,9 +43,37 @@ pub struct EmptyState {
 impl Default for EmptyState {
     fn default() -> Self {
         Self {
-            icon: IconName::Sparkles,
+            icon: ChatIcon::Named(IconName::Sparkles),
             title: "Ask your library".into(),
             description: "Answers cite the documents you attach or index.".into(),
+        }
+    }
+}
+
+/// How the assistant signs its messages.
+#[derive(Clone, Debug)]
+pub struct ChatIdentity {
+    /// Name next to the assistant's mark, e.g. `Scico`.
+    pub name: SharedString,
+    /// Mark shown before the name.
+    pub icon: ChatIcon,
+}
+
+impl ChatIdentity {
+    /// Identity with a name and a mark.
+    pub fn new(name: impl Into<SharedString>, icon: impl Into<ChatIcon>) -> Self {
+        Self {
+            name: name.into(),
+            icon: icon.into(),
+        }
+    }
+}
+
+impl Default for ChatIdentity {
+    fn default() -> Self {
+        Self {
+            name: "Ragrig".into(),
+            icon: ChatIcon::Named(IconName::Bot),
         }
     }
 }
@@ -98,6 +127,7 @@ pub struct ChatView {
     texts: Entity<MessageTexts>,
     scroller: Entity<MessageScrollerState>,
     empty: EmptyState,
+    assistant: ChatIdentity,
 }
 
 impl ChatView {
@@ -111,6 +141,7 @@ impl ChatView {
             texts,
             scroller,
             empty: EmptyState::default(),
+            assistant: ChatIdentity::default(),
         }
     }
 
@@ -123,6 +154,18 @@ impl ChatView {
     /// Replace the empty state and redraw.
     pub fn set_empty_state(&mut self, empty: EmptyState, cx: &mut Context<Self>) {
         self.empty = empty;
+        cx.notify();
+    }
+
+    /// Set how the assistant signs its messages.
+    pub fn assistant(mut self, identity: ChatIdentity) -> Self {
+        self.assistant = identity;
+        self
+    }
+
+    /// Set the assistant identity and redraw.
+    pub fn set_assistant(&mut self, identity: ChatIdentity, cx: &mut Context<Self>) {
+        self.assistant = identity;
         cx.notify();
     }
 
@@ -449,6 +492,7 @@ impl Render for ChatView {
         let view_id = cx.entity_id().as_u64();
         let state = self.state.clone();
         let texts = self.texts.clone();
+        let assistant = self.assistant.clone();
 
         MessageScroller::new(
             ElementId::View(cx.entity_id()),
@@ -458,7 +502,7 @@ impl Render for ChatView {
                 match message {
                     Some(message) => {
                         let text = texts.read(cx).get(message.id());
-                        message_row(&message, text, &this, view_id, cx)
+                        message_row(&message, text, &assistant, &this, view_id, cx)
                     }
                     None => div().into_any_element(),
                 }
@@ -483,7 +527,7 @@ fn empty_view(empty: &EmptyState, theme: &Theme) -> AnyElement {
         .items_center()
         .justify_center()
         .gap_2()
-        .child(div().text_2xl().child(empty.icon))
+        .child(empty.icon.view().size(px(56.)))
         .child(
             div()
                 .text_lg()
@@ -502,6 +546,7 @@ fn empty_view(empty: &EmptyState, theme: &Theme) -> AnyElement {
 fn message_row(
     message: &ChatMessage,
     text: Option<Entity<TextViewState>>,
+    assistant: &ChatIdentity,
     this: &WeakEntity<ChatView>,
     view_id: u64,
     cx: &mut App,
@@ -554,7 +599,7 @@ fn message_row(
                 .bg(theme.secondary)
                 .rounded(theme.radius)
                 .child(role_header(
-                    IconName::CircleUser,
+                    &ChatIcon::Named(IconName::CircleUser),
                     "You",
                     theme.muted_foreground,
                     message.id(),
@@ -575,8 +620,8 @@ fn message_row(
         }
         ChatRole::Assistant => {
             let mut row = v_flex().w_full().gap_2().px_4().py_3().child(role_header(
-                IconName::Bot,
-                "Ragrig",
+                &assistant.icon,
+                assistant.name.clone(),
                 theme.primary,
                 message.id(),
                 message.state(),
@@ -603,8 +648,8 @@ fn message_row(
 }
 
 fn role_header(
-    icon: IconName,
-    label: &'static str,
+    icon: &ChatIcon,
+    label: impl Into<SharedString>,
     color: Hsla,
     id: MessageId,
     state: &MessageState,
@@ -616,12 +661,12 @@ fn role_header(
     h_flex()
         .items_center()
         .gap_2()
-        .child(div().text_color(color).child(icon))
+        .child(div().text_color(color).child(icon.view()))
         .child(
             div()
                 .text_sm()
                 .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                .child(label),
+                .child(label.into()),
         )
         .when(streaming, |row| {
             row.child(streaming_dot(view_id, id, theme.primary)).child(

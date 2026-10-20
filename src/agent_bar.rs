@@ -4,7 +4,8 @@ use std::{rc::Rc, time::Duration};
 
 use gpui_kit::{
     Anchor, Animation, AnimationExt as _, AnyElement, App, Div, ElementId, FontWeight, Hsla,
-    IntoElement, ParentElement as _, RenderOnce, SharedString, Styled as _, Window,
+    InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce, SharedString,
+    Styled as _, Window,
     assets::IconName,
     component::{
         ActiveTheme as _, Sizable as _,
@@ -145,6 +146,7 @@ fn component_button(
         .anchor(Anchor::TopLeft)
         .trigger(
             Button::new(trigger_id)
+                .debug_selector(|| format!("{prefix}-{index}-trigger"))
                 .icon(component.kind.icon())
                 .ghost()
                 .small()
@@ -169,16 +171,21 @@ fn component_button(
                     let component_id = component.id.clone();
                     let toggle_id = toggle.id.clone();
                     h_flex()
+                        .w_full()
                         .justify_between()
                         .items_center()
                         .gap_3()
                         .child(
+                            // `min_w(0.)` lets the label column shrink instead
+                            // of pushing the switch past the popover's padding.
                             v_flex()
                                 .flex_1()
-                                .child(div().text_sm().child(toggle.label.clone()))
+                                .min_w(px(0.))
+                                .child(div().min_w(px(0.)).text_sm().child(toggle.label.clone()))
                                 .when_some(toggle.detail.clone(), |column, detail| {
                                     column.child(
                                         div()
+                                            .min_w(px(0.))
                                             .text_xs()
                                             .text_color(cx.theme().muted_foreground)
                                             .child(detail),
@@ -186,34 +193,50 @@ fn component_button(
                                 }),
                         )
                         .child(
-                            Switch::new(ElementId::Name(
-                                format!("{content_prefix}-{index}-toggle-{toggle_id}").into(),
-                            ))
-                            .checked(toggle.enabled)
-                            .on_click(move |enabled, window, cx| {
-                                if let Some(handler) = &handler {
-                                    handler(
-                                        AgentBarEvent::Toggle {
-                                            component: component_id.clone(),
-                                            toggle: toggle_id.clone(),
-                                            enabled: *enabled,
+                            div()
+                                .flex_none()
+                                .debug_selector(|| {
+                                    format!("{content_prefix}-{index}-toggle-{toggle_id}")
+                                })
+                                .child(
+                                    Switch::new(ElementId::Name(
+                                        format!("{content_prefix}-{index}-toggle-{toggle_id}")
+                                            .into(),
+                                    ))
+                                    .checked(toggle.enabled)
+                                    .on_click(
+                                        move |enabled, window, cx| {
+                                            if let Some(handler) = &handler {
+                                                handler(
+                                                    AgentBarEvent::Toggle {
+                                                        component: component_id.clone(),
+                                                        toggle: toggle_id.clone(),
+                                                        enabled: *enabled,
+                                                    },
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
                                         },
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            }),
+                                    ),
+                                ),
                         )
                         .into_any_element()
                 })
                 .collect::<Vec<_>>();
 
+            // The popover shell already supplies `p_3()`; adding it here
+            // narrowed the content box and forced the switches outward.
             v_flex()
+                .id(ElementId::Name(
+                    format!("{content_prefix}-{index}-popover-content").into(),
+                ))
+                .debug_selector(|| format!("{content_prefix}-{index}-popover-content"))
                 .w(px(280.))
-                .p_3()
                 .gap_2()
                 .child(
                     h_flex()
+                        .w_full()
                         .gap_2()
                         .child(div().child(component.kind.icon()))
                         .child(
@@ -239,7 +262,7 @@ fn component_button(
                 })
                 .when(!toggle_rows.is_empty(), |card| {
                     card.child(div().h(px(1.)).bg(cx.theme().border))
-                        .child(v_flex().gap_2().children(toggle_rows))
+                        .child(v_flex().w_full().gap_2().children(toggle_rows))
                 })
                 .child(
                     Button::new(configure_id)
@@ -292,7 +315,21 @@ fn status_color(status: ComponentStatus, cx: &App) -> Hsla {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::ComponentKind;
+    use crate::model::{ComponentKind, ComponentToggle};
+    use gpui_kit::{Context, Modifiers, Render, TestAppContext, Window};
+
+    struct BarHost {
+        component: AgentComponent,
+    }
+
+    impl Render for BarHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .w(px(640.))
+                .h(px(320.))
+                .child(AgentBar::new("agent", [self.component.clone()]))
+        }
+    }
 
     #[test]
     fn a_bar_collects_components() {
@@ -304,5 +341,36 @@ mod tests {
             ],
         );
         assert_eq!(bar.components.len(), 2);
+    }
+
+    #[gpui_kit::test]
+    fn toggle_switches_stay_inside_the_popover(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let (_, cx) = cx.add_window_view(|_, _| BarHost {
+            component: AgentComponent::new("memory", ComponentKind::Memory, "Chat memory").toggle(
+                ComponentToggle::new("memory", "Enabled", true)
+                    .detail("Conversation transcript and query rewriting."),
+            ),
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let trigger = cx.debug_bounds("agent-0-trigger").expect("trigger bounds");
+        cx.simulate_click(trigger.center(), Modifiers::default());
+        cx.run_until_parked();
+        for _ in 0..2 {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+
+        let content = cx
+            .debug_bounds("agent-0-popover-content")
+            .expect("popover content bounds");
+        let switch = cx
+            .debug_bounds("agent-0-toggle-memory")
+            .expect("switch bounds");
+        assert!(
+            switch.right() <= content.right() + px(0.5),
+            "switch {switch:?} escapes the popover content {content:?}"
+        );
+        assert!(switch.left() >= content.left(), "switch starts outside");
     }
 }

@@ -78,6 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dropdown_control`, `path_control`, and `token_control`.
 - `rag_model_page` and `rag_references_group` take a `Changes` closure so hosts
   can show unsaved marks; `no_changes()` keeps the standalone use simple.
+- **Host-supplied assistant identity.** `ChatIcon` carries a catalog name, an
+  asset path, or inline SVG bytes; `ChatIdentity` pairs a name with a mark.
+  `ChatView::assistant` / `set_assistant` and `RagChat::set_assistant` brand the
+  transcript rows, and `EmptyState::icon` accepts the same `ChatIcon`. Inline
+  SVG needs no asset registration, so an application can compile its logo into
+  the binary. The empty-state mark is rendered at 56 px.
 
 ### Changed
 
@@ -90,6 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   controller and no longer renders the Profiles and Apply groups. Hosts place
   those on their own Overview page; `rag_settings_page` still renders the full
   standalone page.
+- **Breaking:** `EmptyState::icon` is now a `ChatIcon`; wrap a catalog icon
+  with `IconName::….into()`.
 - The agent bar uses `Database` for the vector store and `Pilcrow` for the
   chunker; component buttons also have a tinted placeholder background. The
   blank icons were caused by the default `gpui_kit::assets::Assets` bundle
@@ -105,6 +113,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clips when the settings surface is narrow.
 - Vertical rows (system prompt, folder corpora) now give their control the full
   row width.
+- Agent-bar component popovers keep their switches inside the content box. The
+  label column may shrink (`min_w(0.)`), the switch does not (`flex_none()`),
+  and the content no longer adds a second padding on top of the popover shell.
+  `toggle_switches_stay_inside_the_popover` checks the rendered switch bounds.
 
 ## v0.2.0 — 2026-10-17
 

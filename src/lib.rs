@@ -31,6 +31,7 @@ mod cancel;
 mod chat_view;
 mod composer;
 pub mod editor;
+mod icon;
 mod markdown;
 mod model;
 #[cfg(feature = "ragrig")]
@@ -47,9 +48,10 @@ pub mod prelude;
 pub use agent_bar::{AgentBar, AgentBarEvent};
 pub use attachments::{AttachmentEvent, AttachmentRows};
 pub use cancel::CancelFlag;
-pub use chat_view::{ChatView, ChatViewEvent, EmptyState};
+pub use chat_view::{ChatIdentity, ChatView, ChatViewEvent, EmptyState};
 pub use composer::{Composer, ComposerEvent};
 pub use editor::*;
+pub use icon::ChatIcon;
 pub use markdown::stabilize_markdown;
 pub use model::*;
 #[cfg(feature = "ragrig")]
