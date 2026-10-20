@@ -414,6 +414,7 @@ async fn agent_info(shared: &Arc<Shared>) -> Option<AgentInfo> {
         chat_model: agent.chat_agent().model_name().to_owned(),
         embed_backend: agent.embedder().backend_name().to_owned(),
         embed_model: agent.embedder().model_name().to_owned(),
+        hybrid: agent.embedder().is_enabled(),
         memory: format!("{:?}", session.memory_strategy()).to_lowercase(),
         pdf_backend,
         top_k: agent.top_k(),
@@ -761,6 +762,16 @@ async fn run_sync(
     cancel: CancellationToken,
     events: Sender<RagEvent>,
 ) {
+    if !shared.setup.lock().expect("setup").hybrid {
+        let _ = events
+            .send(RagEvent::SyncFailed {
+                id,
+                message: "hybrid retrieval is off; enable it before indexing".to_owned(),
+            })
+            .await;
+        finish_sync(&shared, id);
+        return;
+    }
     if !folder.is_dir() {
         let _ = events
             .send(RagEvent::SyncFailed {
@@ -1084,8 +1095,14 @@ async fn build_session(setup: &RagSetup) -> Result<AgentSession, String> {
     let chat = chat_spec
         .build()
         .map_err(|error| format!("cannot build the chat backend: {error:#}"))?;
-    let embed_spec = EmbedderSpec::try_from(&config.embed)
-        .map_err(|error| format!("cannot configure the embedder: {error:#}"))?;
+    let embed_spec = if setup.hybrid {
+        EmbedderSpec::try_from(&config.embed)
+            .map_err(|error| format!("cannot configure the embedder: {error:#}"))?
+    } else {
+        // Off means no embedding model is built at all. Ragrig then skips
+        // retrieval and the agent answers from explicit attachments.
+        EmbedderSpec::none()
+    };
     let embedder = embed_spec
         .build()
         .map_err(|error| format!("cannot build the embedder: {error:#}"))?;

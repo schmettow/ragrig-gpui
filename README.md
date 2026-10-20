@@ -150,6 +150,13 @@ ragrig-gpui
   grobid-bibtex pre-pass ── manifest, extract, rename, merge
 ```
 
+- `AgentBar` renders one icon per pipeline component and reports
+  `AgentBarEvent::{Configure, Toggle, OpenSettings}`. A component can carry
+  `ComponentToggle` switches; the host owns the setting and reflects the new
+  value on the next render. `RagController::agent_components()` uses this for
+  **Chat memory** and **Hybrid retrieval** (off means `EmbedderSpec::None`, no
+  embedding model, and no vector search).
+
 - `RagController::new(RagSetup, cx)` starts one worker thread per controller.
   `ask` sends one question; `ask_with_retrieval` also carries a passage that
   the worker prepends to the query before embedding and searching. The host's

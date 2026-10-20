@@ -136,6 +136,12 @@ pub struct RagSetup {
     /// Whether `@key` mentions in a question attach the paper as one-shot
     /// context. On by default.
     pub resolve_citations: bool,
+    /// Whether hybrid retrieval (BM25 + embeddings) is enabled.
+    ///
+    /// Off builds a no-op embedder: questions still use explicit attachments
+    /// and the bibliographic library, but no vector search runs and no
+    /// embedding model is required. On by default.
+    pub hybrid: bool,
 }
 
 impl RagSetup {
@@ -147,6 +153,7 @@ impl RagSetup {
             system_prompt: None,
             stream: true,
             resolve_citations: true,
+            hybrid: true,
         }
     }
 
@@ -158,6 +165,7 @@ impl RagSetup {
             system_prompt: Some(prompt.into()),
             stream: true,
             resolve_citations: true,
+            hybrid: true,
         }
     }
 
@@ -165,6 +173,17 @@ impl RagSetup {
     pub fn with_bibliography(mut self, path: impl Into<PathBuf>) -> Self {
         self.bibliography = Some(path.into());
         self
+    }
+
+    /// Turn hybrid retrieval (embeddings) on or off.
+    pub fn with_hybrid(mut self, hybrid: bool) -> Self {
+        self.hybrid = hybrid;
+        self
+    }
+
+    /// Whether conversation memory is on (`false` for the `Off` strategy).
+    pub fn memory_enabled(&self) -> bool {
+        !matches!(self.config.memory.strategy, MemoryStrategyKind::Off)
     }
 }
 
@@ -213,6 +232,9 @@ pub struct RagSettings {
     pub stream: bool,
     /// Ollama embedding model.
     pub embed_model: String,
+    /// Hybrid retrieval (BM25 + embeddings). Off runs without an embedding
+    /// model and skips vector search.
+    pub hybrid: bool,
     /// Chunks retrieved per query.
     pub top_k: usize,
     /// Minimum similarity for a chunk to enter the prompt.
@@ -284,6 +306,8 @@ pub enum RagField {
     SystemPrompt,
     /// Embedding model.
     EmbedModel,
+    /// Hybrid retrieval.
+    Hybrid,
     /// Retrieved chunks.
     TopK,
     /// Minimum similarity.
@@ -325,9 +349,11 @@ impl RagField {
             | Self::ContextTokens
             | Self::Stream
             | Self::SystemPrompt => RagSection::Chat,
-            Self::EmbedModel | Self::TopK | Self::SimilarityThreshold | Self::CorpusDirs => {
-                RagSection::Retrieval
-            }
+            Self::EmbedModel
+            | Self::Hybrid
+            | Self::TopK
+            | Self::SimilarityThreshold
+            | Self::CorpusDirs => RagSection::Retrieval,
             Self::PdfBackend | Self::SloppyPdf | Self::ChunkSize | Self::ChunkOverlap => {
                 RagSection::Parsing
             }
@@ -470,6 +496,7 @@ impl RagSettings {
             self.embed_model != applied.embed_model,
             RagField::EmbedModel,
         );
+        changes.mark_if(self.hybrid != applied.hybrid, RagField::Hybrid);
         changes.mark_if(self.top_k != applied.top_k, RagField::TopK);
         changes.mark_if(
             self.similarity_threshold != applied.similarity_threshold,
@@ -593,6 +620,7 @@ impl RagSettings {
             built_in_prompt: default_prompt(),
             stream: true,
             embed_model: config.embed.model.clone(),
+            hybrid: true,
             top_k: config.embed.top_k,
             similarity_threshold: config.embed.similarity_threshold,
             chunk_size: config.parse.chunk_size,
@@ -734,6 +762,7 @@ impl RagSettings {
         };
         setup.stream = self.stream;
         setup.resolve_citations = self.resolve_citations;
+        setup.hybrid = self.hybrid;
         if !self.bibliography.trim().is_empty() {
             setup.bibliography = Some(PathBuf::from(self.bibliography.trim()));
         }
@@ -772,16 +801,18 @@ impl RagSettings {
         if self.context_tokens < 256 {
             return Err("context tokens must be at least 256".to_owned());
         }
-        if self.embed_model.trim().is_empty() {
-            return Err("choose an embedding model".to_owned());
-        }
-        if self.top_k == 0 {
-            return Err("top-k must be at least 1".to_owned());
-        }
-        if !self.similarity_threshold.is_finite()
-            || !(0.0..=1.0).contains(&self.similarity_threshold)
-        {
-            return Err("similarity threshold must be between 0 and 1".to_owned());
+        if self.hybrid {
+            if self.embed_model.trim().is_empty() {
+                return Err("choose an embedding model".to_owned());
+            }
+            if self.top_k == 0 {
+                return Err("top-k must be at least 1".to_owned());
+            }
+            if !self.similarity_threshold.is_finite()
+                || !(0.0..=1.0).contains(&self.similarity_threshold)
+            {
+                return Err("similarity threshold must be between 0 and 1".to_owned());
+            }
         }
         if self.chunk_size == 0 {
             return Err("chunk size must be at least 1".to_owned());
@@ -870,7 +901,11 @@ impl RagSettings {
             .map_err(|error| format!("cannot load profile '{name}': {error:#}"))?;
         let profiles = self.profiles.clone();
         let built_in_prompt = self.built_in_prompt.clone();
+        // Hybrid retrieval is a runtime choice, not part of a profile, so keep
+        // it across profile switches.
+        let hybrid = self.hybrid;
         let mut loaded = Self::from_config(&config);
+        loaded.hybrid = hybrid;
         loaded.profiles = profiles;
         loaded.profile_name = name.to_owned();
         loaded.built_in_prompt = built_in_prompt.clone();
@@ -939,10 +974,35 @@ mod tests {
         assert_eq!(setup.config.parse.chunk_overlap, 128);
         assert!(setup.system_prompt.is_some());
         assert!(setup.resolve_citations);
+        assert!(setup.hybrid);
+        assert!(setup.memory_enabled());
 
         let mut settings = fixture();
         settings.resolve_citations = false;
         assert!(!settings.to_setup().expect("valid setup").resolve_citations);
+    }
+
+    #[test]
+    fn memory_and_retrieval_switches_reach_the_setup() {
+        let mut settings = fixture();
+        settings.memory = MemoryChoice::Off;
+        settings.hybrid = false;
+
+        let setup = settings.to_setup().expect("valid setup");
+        assert!(!setup.memory_enabled());
+        assert!(!setup.hybrid);
+    }
+
+    #[test]
+    fn hybrid_off_does_not_require_an_embedding_model() {
+        let mut settings = fixture();
+        settings.hybrid = false;
+        settings.embed_model.clear();
+
+        assert!(settings.to_setup().is_ok());
+
+        settings.hybrid = true;
+        assert!(settings.to_setup().is_err());
     }
 
     #[test]
@@ -1160,6 +1220,9 @@ mod tests {
             }),
             (RagField::EmbedModel, |settings| {
                 settings.embed_model.push_str("-alt")
+            }),
+            (RagField::Hybrid, |settings| {
+                settings.hybrid = !settings.hybrid
             }),
             (RagField::TopK, |settings| settings.top_k += 1),
             (RagField::SimilarityThreshold, |settings| {

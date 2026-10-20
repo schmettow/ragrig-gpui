@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Switchable status-bar components.** `AgentComponent` now carries
+  `ComponentToggle` switches, rendered in its popover. `AgentBarEvent::Toggle`
+  reports `{component, toggle, enabled}` to the host. `ComponentKind::Memory`
+  and `IconName::Brain` label the new voice. `RagController::agent_components()`
+  adds **Chat memory** and extends **Hybrid retrieval** with switches, and the
+  controller mirrors both values through `memory_enabled()` and `hybrid()`.
+- **Hybrid retrieval switch.** `RagSettings::hybrid` (default on) and
+  `RagSetup::hybrid` reach the worker. Off builds `EmbedderSpec::None`, so no
+  embedding model is required and vector search is skipped; attached documents
+  and the bibliographic library still reach the prompt. Ingestion reports a
+  clear error while hybrid retrieval is off. `AgentInfo::hybrid` reports the
+  built embedder state, and `RagField::Hybrid` tracks the settings row.
+- **`RagSetup::memory_enabled()`** reports whether the configured memory
+  strategy is anything but `Off`.
 - **Retrieval enrichment.** `RagCommand::Ask` carries an optional `retrieval`
   text and `RagController::ask_with_retrieval` sets it. The worker prepends it
   to the prompt before embedding and searching, so a host can let a marked

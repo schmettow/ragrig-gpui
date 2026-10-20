@@ -13,7 +13,7 @@ use std::{
 use async_channel::{Sender, TrySendError};
 use gpui_kit::{Context, EventEmitter};
 
-use crate::model::{AgentComponent, ComponentKind, ComponentStatus, SessionEntry};
+use crate::model::{AgentComponent, ComponentKind, ComponentStatus, ComponentToggle, SessionEntry};
 #[cfg(feature = "grobid")]
 use crate::references::{ReferenceEntry, ReferenceOptions, ReferenceProgress, ReferenceReport};
 
@@ -30,6 +30,11 @@ pub struct RagController {
     current_session: Option<String>,
     library: LibrarySnapshot,
     agent: Option<AgentInfo>,
+    /// Whether conversation memory is on; mirrors the setup while a rebuild
+    /// is in flight so the agent bar never flips back to a stale value.
+    memory_enabled: bool,
+    /// Whether hybrid retrieval (embeddings) is on.
+    hybrid: bool,
     ingest: Option<IngestProgress>,
     sync_request: Option<RequestId>,
     busy: bool,
@@ -57,6 +62,8 @@ impl RagController {
     /// that fails to build is reported later through
     /// [`RagEvent::AgentFailed`].
     pub fn new(setup: RagSetup, cx: &mut Context<Self>) -> Result<Self, String> {
+        let memory_enabled = setup.memory_enabled();
+        let hybrid = setup.hybrid;
         let (commands, command_rx) = async_channel::bounded(32);
         let (events_tx, events) = async_channel::bounded(256);
         let worker = actor::start(setup, None, command_rx, events_tx)
@@ -81,6 +88,8 @@ impl RagController {
             current_session: None,
             library: LibrarySnapshot::default(),
             agent: None,
+            memory_enabled,
+            hybrid,
             ingest: None,
             sync_request: None,
             busy: false,
@@ -241,6 +250,8 @@ impl RagController {
 
     /// Rebuild the agent with new configuration.
     pub fn apply(&mut self, setup: RagSetup, cx: &mut Context<Self>) {
+        self.memory_enabled = setup.memory_enabled();
+        self.hybrid = setup.hybrid;
         self.agent = None;
         self.busy = false;
         self.ingest = None;
@@ -370,25 +381,68 @@ impl RagController {
         }
     }
 
+    /// Whether conversation memory is on.
+    pub fn memory_enabled(&self) -> bool {
+        self.memory_enabled
+    }
+
+    /// Whether hybrid retrieval (embeddings) is on.
+    pub fn hybrid(&self) -> bool {
+        self.hybrid
+    }
+
     /// Pipeline components for [`AgentBar`](crate::AgentBar).
     pub fn agent_components(&self) -> Vec<AgentComponent> {
+        let memory_toggle = ComponentToggle::new("memory", "Enabled", self.memory_enabled)
+            .detail("Conversation transcript and query rewriting.");
+        let hybrid_toggle = ComponentToggle::new("hybrid", "Enabled", self.hybrid)
+            .detail("BM25 plus embeddings. Off needs no embedding model.");
+
         let Some(agent) = &self.agent else {
             let status = if self.last_error.is_some() {
                 ComponentStatus::Error
             } else {
                 ComponentStatus::Inactive
             };
-            let components: Vec<AgentComponent> = [
-                (ComponentKind::Chat, "Chat model"),
-                (ComponentKind::Embedder, "Embedder"),
-                (ComponentKind::Store, "Vector store"),
-                (ComponentKind::Parser, "PDF parser"),
-                (ComponentKind::Chunker, "Chunker"),
-                (ComponentKind::Retriever, "Retriever"),
-            ]
-            .into_iter()
-            .map(|(kind, label)| AgentComponent::new(kind_label(kind), kind, label).status(status))
-            .collect();
+            let memory_status = if self.memory_enabled {
+                status
+            } else {
+                ComponentStatus::Inactive
+            };
+            let retrieval_status = if self.hybrid {
+                status
+            } else {
+                ComponentStatus::Inactive
+            };
+            let components = vec![
+                AgentComponent::new("chat", ComponentKind::Chat, "Chat model").status(status),
+                AgentComponent::new("embed", ComponentKind::Embedder, "Embedder")
+                    .status(retrieval_status)
+                    .detail(if self.hybrid {
+                        "hybrid retrieval"
+                    } else {
+                        "off · no embedding model"
+                    }),
+                AgentComponent::new("store", ComponentKind::Store, "Vector store").status(status),
+                AgentComponent::new("parser", ComponentKind::Parser, "PDF parser").status(status),
+                AgentComponent::new("chunker", ComponentKind::Chunker, "Chunker").status(status),
+                AgentComponent::new("retriever", ComponentKind::Retriever, "Hybrid retrieval")
+                    .status(retrieval_status)
+                    .detail(if self.hybrid {
+                        "BM25 + embeddings"
+                    } else {
+                        "off · no embeddings"
+                    })
+                    .toggle(hybrid_toggle),
+                AgentComponent::new("memory", ComponentKind::Memory, "Chat memory")
+                    .status(memory_status)
+                    .detail(if self.memory_enabled {
+                        "conversation memory"
+                    } else {
+                        "off · no transcript or rewriting"
+                    })
+                    .toggle(memory_toggle),
+            ];
             #[cfg(feature = "grobid")]
             let components = {
                 let mut components = components;
@@ -406,6 +460,16 @@ impl RagController {
         } else {
             ComponentStatus::Ready
         };
+        let retrieval_status = if self.hybrid {
+            pipeline
+        } else {
+            ComponentStatus::Inactive
+        };
+        let memory_status = if self.memory_enabled {
+            ComponentStatus::Ready
+        } else {
+            ComponentStatus::Inactive
+        };
         let chat = if self.busy {
             ComponentStatus::Busy
         } else {
@@ -416,9 +480,21 @@ impl RagController {
             AgentComponent::new("chat", ComponentKind::Chat, agent.chat_model.clone())
                 .status(chat)
                 .detail(format!("{} · {} memory", agent.chat_backend, agent.memory)),
-            AgentComponent::new("embed", ComponentKind::Embedder, agent.embed_model.clone())
-                .status(pipeline)
-                .detail(format!("{} · top {}", agent.embed_backend, agent.top_k)),
+            AgentComponent::new(
+                "embed",
+                ComponentKind::Embedder,
+                if self.hybrid {
+                    agent.embed_model.clone()
+                } else {
+                    "No embeddings".to_owned()
+                },
+            )
+            .status(retrieval_status)
+            .detail(if self.hybrid {
+                format!("{} · top {}", agent.embed_backend, agent.top_k)
+            } else {
+                "off · no embedding model".to_owned()
+            }),
             AgentComponent::new("store", ComponentKind::Store, "Vector store")
                 .status(pipeline)
                 .detail(format!(
@@ -436,8 +512,21 @@ impl RagController {
                     agent.chunk_size, agent.chunk_overlap
                 )),
             AgentComponent::new("retriever", ComponentKind::Retriever, "Hybrid retrieval")
-                .status(pipeline)
-                .detail(format!("top {}", agent.top_k)),
+                .status(retrieval_status)
+                .detail(if self.hybrid {
+                    format!("BM25 + embeddings · top {}", agent.top_k)
+                } else {
+                    "off · no embeddings".to_owned()
+                })
+                .toggle(hybrid_toggle),
+            AgentComponent::new("memory", ComponentKind::Memory, "Chat memory")
+                .status(memory_status)
+                .detail(if self.memory_enabled {
+                    format!("{} strategy", agent.memory)
+                } else {
+                    "off · no transcript or rewriting".to_owned()
+                })
+                .toggle(memory_toggle),
         ];
         #[cfg(feature = "grobid")]
         let components = {
@@ -495,6 +584,8 @@ impl RagController {
     fn on_event(&mut self, event: RagEvent, cx: &mut Context<Self>) {
         match &event {
             RagEvent::AgentReady(info) => {
+                self.memory_enabled = info.memory != "off";
+                self.hybrid = info.hybrid;
                 self.agent = Some(info.clone());
                 self.last_error = None;
             }
@@ -605,20 +696,6 @@ impl Drop for RagController {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
-    }
-}
-
-fn kind_label(kind: ComponentKind) -> &'static str {
-    match kind {
-        ComponentKind::Chat => "chat",
-        ComponentKind::Embedder => "embed",
-        ComponentKind::Store => "store",
-        ComponentKind::Parser => "parser",
-        ComponentKind::Chunker => "chunker",
-        ComponentKind::Retriever => "retriever",
-        ComponentKind::Vision => "vision",
-        ComponentKind::References => "references",
-        ComponentKind::Other => "component",
     }
 }
 

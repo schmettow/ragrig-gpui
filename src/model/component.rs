@@ -17,6 +17,8 @@ pub enum ComponentKind {
     Chunker,
     /// The retrieval strategy.
     Retriever,
+    /// Conversation memory and query rewriting.
+    Memory,
     /// A vision or OCR component.
     Vision,
     /// Bibliographic reference extraction.
@@ -35,6 +37,7 @@ impl ComponentKind {
             Self::Parser => "Parser",
             Self::Chunker => "Chunker",
             Self::Retriever => "Retriever",
+            Self::Memory => "Chat memory",
             Self::Vision => "Vision",
             Self::References => "References",
             Self::Other => "Component",
@@ -50,6 +53,7 @@ impl ComponentKind {
             Self::Parser => IconName::FileText,
             Self::Chunker => IconName::Pilcrow,
             Self::Retriever => IconName::Search,
+            Self::Memory => IconName::Brain,
             Self::Vision => IconName::Eye,
             Self::References => IconName::BookOpen,
             Self::Other => IconName::Settings,
@@ -88,6 +92,42 @@ impl ComponentStatus {
     }
 }
 
+/// A switch shown in a component's status popover.
+///
+/// Components that can be turned on and off expose one or more of these.
+/// The bar reports a change through `AgentBarEvent::Toggle`; the host owns
+/// the actual setting and reflects the new value in the component on the next
+/// render.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComponentToggle {
+    /// Stable identifier reported when the switch changes.
+    pub id: String,
+    /// Switch label, e.g. `Enabled`.
+    pub label: String,
+    /// Whether the aspect is currently on.
+    pub enabled: bool,
+    /// Optional explanation shown under the label.
+    pub detail: Option<String>,
+}
+
+impl ComponentToggle {
+    /// A switch with an ID, label, and current state.
+    pub fn new(id: impl Into<String>, label: impl Into<String>, enabled: bool) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            enabled,
+            detail: None,
+        }
+    }
+
+    /// Describe what switching the aspect on or off means.
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+}
+
 /// One component shown in the agent bar.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentComponent {
@@ -101,6 +141,8 @@ pub struct AgentComponent {
     pub status: ComponentStatus,
     /// Optional detail line: backend, model, last error.
     pub detail: Option<String>,
+    /// Switches offered in the component popover.
+    pub toggles: Vec<ComponentToggle>,
 }
 
 impl AgentComponent {
@@ -112,6 +154,7 @@ impl AgentComponent {
             label: label.into(),
             status: ComponentStatus::default(),
             detail: None,
+            toggles: Vec::new(),
         }
     }
 
@@ -124,6 +167,12 @@ impl AgentComponent {
     /// Set the detail line.
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
+        self
+    }
+
+    /// Add a switch to the component popover.
+    pub fn toggle(mut self, toggle: ComponentToggle) -> Self {
+        self.toggles.push(toggle);
         self
     }
 }
@@ -155,6 +204,7 @@ mod tests {
             ComponentKind::Parser,
             ComponentKind::Chunker,
             ComponentKind::Retriever,
+            ComponentKind::Memory,
             ComponentKind::Vision,
             ComponentKind::References,
             ComponentKind::Other,
@@ -178,5 +228,15 @@ mod tests {
         let component = AgentComponent::new("chat", ComponentKind::Chat, "DeepSeek");
         assert_eq!(component.status, ComponentStatus::Inactive);
         assert!(!component.status.is_busy());
+        assert!(component.toggles.is_empty());
+    }
+
+    #[test]
+    fn a_component_can_carry_switches() {
+        let component = AgentComponent::new("memory", ComponentKind::Memory, "Chat memory")
+            .toggle(ComponentToggle::new("memory", "Enabled", true).detail("rewrite"));
+        assert_eq!(component.toggles.len(), 1);
+        assert_eq!(component.toggles[0].id, "memory");
+        assert!(component.toggles[0].enabled);
     }
 }

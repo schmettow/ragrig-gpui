@@ -14,6 +14,6 @@ pub use attachment::{Attachment, AttachmentKind};
 pub use chat::{
     ChatMessage, ChatRole, ChatState, MessageId, MessageMeta, MessageState, NewMessage, SourceRef,
 };
-pub use component::{AgentComponent, ComponentKind, ComponentStatus};
+pub use component::{AgentComponent, ComponentKind, ComponentStatus, ComponentToggle};
 pub use session::SessionEntry;
 pub use settings::ChatSettings;

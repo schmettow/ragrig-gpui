@@ -11,6 +11,7 @@ use gpui_kit::{
         button::{Button, ButtonVariants as _},
         h_flex,
         popover::Popover,
+        switch::Switch,
         v_flex,
     },
     div,
@@ -25,6 +26,15 @@ use crate::model::{AgentComponent, ComponentStatus};
 pub enum AgentBarEvent {
     /// Open the configuration surface for a component id.
     Configure(String),
+    /// Flip a switch in a component popover.
+    Toggle {
+        /// Component id that owns the switch.
+        component: String,
+        /// Switch id.
+        toggle: String,
+        /// The state the user asked for.
+        enabled: bool,
+    },
     /// Open the general agent settings.
     OpenSettings,
 }
@@ -151,6 +161,53 @@ fn component_button(
             let id = component.id.clone();
             let configure_popover = popover_entity.clone();
 
+            let toggle_rows = component
+                .toggles
+                .iter()
+                .map(|toggle| {
+                    let handler = content_handler.clone();
+                    let component_id = component.id.clone();
+                    let toggle_id = toggle.id.clone();
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .child(div().text_sm().child(toggle.label.clone()))
+                                .when_some(toggle.detail.clone(), |column, detail| {
+                                    column.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(detail),
+                                    )
+                                }),
+                        )
+                        .child(
+                            Switch::new(ElementId::Name(
+                                format!("{content_prefix}-{index}-toggle-{toggle_id}").into(),
+                            ))
+                            .checked(toggle.enabled)
+                            .on_click(move |enabled, window, cx| {
+                                if let Some(handler) = &handler {
+                                    handler(
+                                        AgentBarEvent::Toggle {
+                                            component: component_id.clone(),
+                                            toggle: toggle_id.clone(),
+                                            enabled: *enabled,
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            }),
+                        )
+                        .into_any_element()
+                })
+                .collect::<Vec<_>>();
+
             v_flex()
                 .w(px(280.))
                 .p_3()
@@ -179,6 +236,10 @@ fn component_button(
                             .text_color(cx.theme().muted_foreground)
                             .child(detail),
                     )
+                })
+                .when(!toggle_rows.is_empty(), |card| {
+                    card.child(div().h(px(1.)).bg(cx.theme().border))
+                        .child(v_flex().gap_2().children(toggle_rows))
                 })
                 .child(
                     Button::new(configure_id)

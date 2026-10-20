@@ -339,6 +339,43 @@ impl Render for ChatPanel {
                         state.set_status(format!("Configure {id} in the Settings tab"), cx)
                     });
                 }
+                AgentBarEvent::Toggle {
+                    component, enabled, ..
+                } => {
+                    agent_state.update(cx, |state, cx| {
+                        state.settings.update(cx, |settings, cx| {
+                            match component.as_str() {
+                                "memory" => {
+                                    settings.memory = if enabled {
+                                        MemoryChoice::Rewrite
+                                    } else {
+                                        MemoryChoice::Off
+                                    };
+                                }
+                                "hybrid" => settings.hybrid = enabled,
+                                _ => return,
+                            }
+                            cx.notify();
+                        });
+                        let setup = state.settings.read(cx).to_setup();
+                        match setup {
+                            Ok(setup) => {
+                                state
+                                    .controller
+                                    .update(cx, |controller, cx| controller.apply(setup, cx));
+                                state.set_status(
+                                    format!(
+                                        "{} {}",
+                                        component,
+                                        if enabled { "enabled" } else { "disabled" }
+                                    ),
+                                    cx,
+                                );
+                            }
+                            Err(error) => state.set_status(error, cx),
+                        }
+                    });
+                }
                 AgentBarEvent::OpenSettings => {
                     agent_state.update(cx, |state, cx| {
                         state.set_status("Settings are in the right dock", cx)
@@ -799,6 +836,9 @@ impl Render for LibraryPanel {
                 selection_footer = Some(
                     ReferenceSelectionBar::new(selected_entries)
                         .on_action(move |action, entries, _, cx| match action {
+                            ReferenceAction::Insert => action_state.update(cx, |state, cx| {
+                                state.set_status("Insert is available in the writing host", cx);
+                            }),
                             ReferenceAction::CopyKeys => action_state.update(cx, |state, cx| {
                                 let count = entries.len();
                                 state.set_status(format!("Copied {count} @keys"), cx);

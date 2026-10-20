@@ -318,6 +318,8 @@ pub struct AgentInfo {
     pub embed_backend: String,
     /// Embedding model in use.
     pub embed_model: String,
+    /// Whether hybrid retrieval (embeddings) is enabled.
+    pub hybrid: bool,
     /// Memory strategy description.
     pub memory: String,
     /// Primary PDF parser backend.

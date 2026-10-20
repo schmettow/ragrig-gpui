@@ -402,6 +402,14 @@ fn retrieval_group(
     changes: &Changes,
     now: &RagChanges,
 ) -> SettingGroup {
+    let hybrid = switch_row(
+        settings,
+        changes,
+        spec("rag-hybrid", RagField::Hybrid, "Hybrid retrieval"),
+        |settings| settings.hybrid,
+        |settings, value| settings.hybrid = value,
+    )
+    .description("BM25 plus embeddings. Off skips vector search and needs no embedding model.");
     let embed_model = text_row(
         settings,
         changes,
@@ -458,6 +466,7 @@ fn retrieval_group(
     mark_group(
         SettingGroup::new()
             .title(group_title("Retrieval", now.section(RagSection::Retrieval)))
+            .item(hybrid.into_item())
             .item(embed_model.into_item())
             .item(top_k.into_item())
             .item(threshold.into_item())

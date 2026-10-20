@@ -449,6 +449,17 @@ impl Render for ChatPanel {
                 AgentBarEvent::Configure(id) => {
                     state.set_status(format!("Configure {id}"), cx);
                 }
+                AgentBarEvent::Toggle {
+                    component, enabled, ..
+                } => {
+                    state.set_status(
+                        format!(
+                            "{component} {}",
+                            if enabled { "enabled" } else { "disabled" }
+                        ),
+                        cx,
+                    );
+                }
                 AgentBarEvent::OpenSettings => {
                     state.set_status("Settings are in the right dock", cx);
                 }
