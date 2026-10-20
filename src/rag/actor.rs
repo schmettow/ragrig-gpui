@@ -1069,6 +1069,10 @@ fn apply_system_prompt(agent: &mut RagAgent, prompt: Option<&str>) {
 
 async fn build_session(setup: &RagSetup) -> Result<AgentSession, String> {
     let mut config = setup.config.clone();
+    let data_dir = setup
+        .data_dir
+        .clone()
+        .unwrap_or_else(|| config.workspace.join(".ragrig"));
     if matches!(config.chat.provider, Provider::Deepseek) && config.chat.deepseek_api_key.is_none()
     {
         match std::env::var("DEEPSEEK_API_KEY") {
@@ -1106,7 +1110,7 @@ async fn build_session(setup: &RagSetup) -> Result<AgentSession, String> {
     let embedder = embed_spec
         .build()
         .map_err(|error| format!("cannot build the embedder: {error:#}"))?;
-    let vector_store = store::open_store(&config.workspace)
+    let vector_store = store::open_store(&data_dir)
         .await
         .map_err(|error| format!("cannot open the vector store: {error:#}"))?;
     let parsers = DocumentParsers::new(filtered_parsers(&config.parse));
@@ -1159,7 +1163,7 @@ async fn build_session(setup: &RagSetup) -> Result<AgentSession, String> {
         .map_err(|error| format!("cannot build the RAG agent: {error:#}"))?;
     apply_system_prompt(&mut agent, system_prompt.as_deref());
 
-    let sessions = FsSessionStore::new(config.workspace.join(".ragrig/sessions"))
+    let sessions = FsSessionStore::new(data_dir.join("sessions"))
         .map_err(|error| format!("cannot open the session store: {error:#}"))?;
     let mut session = AgentSession::new(agent, Box::new(sessions));
 

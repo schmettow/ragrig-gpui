@@ -21,8 +21,10 @@ grobid = ["dep:grobid-bibtex", "dep:biblatex", "ragrig"]
 async-channel = "2"
 blake3 = "1.5"
 comrak = "0.22"
+dirs = "5"
 gpui-kit = "0.7.3"
 ragrig = { version = "1.1", optional = true }
+serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"], optional = true }
 biblatex = { version = "0.12", optional = true }
 grobid-bibtex = { version = "0.3", features = ["pipeline"], optional = true }

@@ -170,6 +170,12 @@ ragrig-gpui
   built-in**. A non-empty `bibliography` field becomes
   `RagSetup::bibliography`; `None` keeps the conventional
   `<workspace>/.ragrig/references.bib`.
+- `RagSetup::data_dir` chooses the device for the vector store, sessions, and
+  profiles; `None` uses `<workspace>/.ragrig`, so the store opens at
+  `<workspace>/.ragrig/.ragrig_store`. `RagSettings::from_layers(workspace)`
+  merges `~/.ragrig/config.json` (or `RAGRIG_HOME/config.json`) and
+  `<workspace>/.ragrig/config.json` per setting over the built-in defaults,
+  workspace last. Profile listing covers both locations.
 - The worker caches a `CiteState` for the configured bibliography and resolves
   citations on its blocking pool before generation. A folder parsed with
   GROBID joins the citation corpora even when it was not indexed.

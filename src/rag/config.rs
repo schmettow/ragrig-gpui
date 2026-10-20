@@ -142,6 +142,12 @@ pub struct RagSetup {
     /// and the bibliographic library, but no vector search runs and no
     /// embedding model is required. On by default.
     pub hybrid: bool,
+    /// Where the vector store, sessions, and profiles live.
+    ///
+    /// `None` uses `<config.workspace>/.ragrig`. A host with a dedicated
+    /// project folder (for example `.ragrig` inside the document workspace)
+    /// sets this explicitly.
+    pub data_dir: Option<PathBuf>,
 }
 
 impl RagSetup {
@@ -154,6 +160,7 @@ impl RagSetup {
             stream: true,
             resolve_citations: true,
             hybrid: true,
+            data_dir: None,
         }
     }
 
@@ -166,6 +173,7 @@ impl RagSetup {
             stream: true,
             resolve_citations: true,
             hybrid: true,
+            data_dir: None,
         }
     }
 
@@ -178,6 +186,12 @@ impl RagSetup {
     /// Turn hybrid retrieval (embeddings) on or off.
     pub fn with_hybrid(mut self, hybrid: bool) -> Self {
         self.hybrid = hybrid;
+        self
+    }
+
+    /// Use `dir` for the vector store, sessions, and profiles.
+    pub fn with_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.data_dir = Some(dir.into());
         self
     }
 
@@ -640,6 +654,83 @@ impl RagSettings {
         }
     }
 
+    /// Read `~/.ragrig/config.json` and `<workspace>/.ragrig/config.json` as
+    /// partial configurations and merge them over the built-in defaults.
+    ///
+    /// The merge is per setting: a key missing from a higher layer keeps the
+    /// value from the layer below, so a workspace only states what it
+    /// changes. Returns `None` when neither file exists.
+    pub fn from_layers(workspace: &Path) -> Option<Self> {
+        let global = home_ragrig_dir().map(|dir| dir.join("config.json"));
+        Self::from_layer_paths(
+            global.as_deref(),
+            &workspace.join(".ragrig/config.json"),
+            None,
+        )
+    }
+
+    /// Like [`Self::from_layers`], but keeps the runtime memory and hybrid
+    /// switches from `base` when no layer mentions them.
+    ///
+    /// The status-bar switches live in `settings.json` as well as the
+    /// workspace layer; this prevents a layer that only sets, say, the chat
+    /// model from resetting them to their defaults.
+    pub fn from_layers_over(workspace: &Path, base: &Self) -> Option<Self> {
+        let global = home_ragrig_dir().map(|dir| dir.join("config.json"));
+        Self::from_layer_paths(
+            global.as_deref(),
+            &workspace.join(".ragrig/config.json"),
+            Some(base),
+        )
+    }
+
+    fn from_layer_paths(
+        global: Option<&Path>,
+        workspace: &Path,
+        base: Option<&Self>,
+    ) -> Option<Self> {
+        let mut layers = serde_json::json!({});
+        let mut found = false;
+        for path in global.into_iter().chain(std::iter::once(workspace)) {
+            let Ok(text) = fs::read_to_string(path) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            merge_json(&mut layers, value);
+            found = true;
+        }
+        if !found {
+            return None;
+        }
+        let memory_present = layers.pointer("/memory/strategy").is_some();
+        let hybrid_present = layers.get("hybrid").is_some();
+        let merged_hybrid = layers.get("hybrid").and_then(|value| value.as_bool());
+        let mut merged = serde_json::to_value(RagrigConfig::default()).ok()?;
+        merge_json(&mut merged, layers);
+        let config: RagrigConfig = serde_json::from_value(merged).ok()?;
+        let mut config = config;
+        // The layer file lives in `<root>/.ragrig/`; relative prompts and
+        // bibliographies resolve against the workspace root, not the cwd.
+        if let Some(root) = workspace.parent().and_then(Path::parent) {
+            config.workspace = root.to_path_buf();
+        }
+        let mut settings = Self::from_config(&config);
+        if let Some(hybrid) = merged_hybrid {
+            settings.hybrid = hybrid;
+        }
+        if let Some(base) = base {
+            if !memory_present {
+                settings.memory = base.memory;
+            }
+            if !hybrid_present {
+                settings.hybrid = base.hybrid;
+            }
+        }
+        Some(settings)
+    }
+
     /// Validate and convert to a Ragrig configuration.
     pub fn to_config(&self) -> Result<RagrigConfig, String> {
         self.validate()?;
@@ -841,25 +932,38 @@ impl RagSettings {
         Ok(())
     }
 
-    /// Re-read the profile list from the workspace.
+    /// Re-read the profile list from the workspace and `~/.ragrig`.
+    ///
+    /// Workspace profiles shadow global profiles with the same name.
     pub fn refresh_profiles(&mut self) {
         let workspace = Path::new(self.workspace.trim());
-        match RagrigConfig::list_profiles(workspace) {
-            Ok(profiles) => {
-                self.profiles = profiles;
-                if !self.profile_name.trim().is_empty()
-                    && !self
-                        .profiles
-                        .iter()
-                        .any(|name| name == self.profile_name.trim())
-                {
-                    self.profiles.insert(0, self.profile_name.trim().to_owned());
+        let mut workspace_failed = None;
+        let mut profiles = match RagrigConfig::list_profiles(workspace) {
+            Ok(profiles) => profiles,
+            Err(error) => {
+                workspace_failed = Some(error);
+                Vec::new()
+            }
+        };
+        if let Some(home) = home_ragrig_dir() {
+            for name in RagrigConfig::list_profiles(&home).unwrap_or_default() {
+                if !profiles.contains(&name) {
+                    profiles.push(name);
                 }
             }
-            Err(error) => {
-                self.profiles.clear();
-                self.status = Some(format!("cannot list profiles: {error:#}"));
-            }
+        }
+        profiles.sort();
+        if let Some(error) = workspace_failed {
+            self.status = Some(format!("cannot list workspace profiles: {error:#}"));
+        }
+        self.profiles = profiles;
+        if !self.profile_name.trim().is_empty()
+            && !self
+                .profiles
+                .iter()
+                .any(|name| name == self.profile_name.trim())
+        {
+            self.profiles.insert(0, self.profile_name.trim().to_owned());
         }
     }
 
@@ -893,12 +997,23 @@ impl RagSettings {
         Ok(())
     }
 
-    /// Load a named profile from the workspace into the editable fields.
+    /// Load a named profile from the workspace, then from `~/.ragrig`.
     pub fn load_profile(&mut self, name: &str) -> Result<(), String> {
         validate_profile_name(name)?;
         let workspace = Path::new(self.workspace.trim());
-        let config = RagrigConfig::load_from_profile(workspace, name)
-            .map_err(|error| format!("cannot load profile '{name}': {error:#}"))?;
+        let mut config = match RagrigConfig::load_from_profile(workspace, name) {
+            Ok(config) => config,
+            Err(workspace_error) => match home_ragrig_dir() {
+                Some(home) => RagrigConfig::load_from_profile(&home, name)
+                    .map_err(|_| format!("cannot load profile '{name}': {workspace_error:#}"))?,
+                None => {
+                    return Err(format!("cannot load profile '{name}': {workspace_error:#}"));
+                }
+            },
+        };
+        // A global profile resolves relative prompt paths against the actual
+        // workspace, never against the home directory.
+        config.workspace = workspace.to_path_buf();
         let profiles = self.profiles.clone();
         let built_in_prompt = self.built_in_prompt.clone();
         // Hybrid retrieval is a runtime choice, not part of a profile, so keep
@@ -935,6 +1050,37 @@ fn default_workspace() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// The user-wide Ragrig directory.
+///
+/// `RAGRIG_HOME` overrides the default `~/.ragrig` (useful for tests and for
+/// keeping one profile library on a shared drive). Profiles here are visible
+/// from every workspace; a workspace profile with the same name wins. A
+/// `config.json` in this directory is the global layer between the built-in
+/// defaults and a workspace's `.ragrig/config.json`.
+pub fn home_ragrig_dir() -> Option<PathBuf> {
+    std::env::var_os("RAGRIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".ragrig")))
+}
+
+/// Merge `overlay` into `base` per key; objects recurse, everything else
+/// replaces.
+fn merge_json(base: &mut serde_json::Value, overlay: serde_json::Value) {
+    match (base, overlay) {
+        (serde_json::Value::Object(base), serde_json::Value::Object(overlay)) => {
+            for (key, value) in overlay {
+                match base.get_mut(&key) {
+                    Some(existing) => merge_json(existing, value),
+                    None => {
+                        base.insert(key, value);
+                    }
+                }
+            }
+        }
+        (base, overlay) => *base = overlay,
+    }
 }
 
 fn default_prompt() -> String {
@@ -1003,6 +1149,72 @@ mod tests {
 
         settings.hybrid = true;
         assert!(settings.to_setup().is_err());
+    }
+
+    #[test]
+    fn layered_config_merges_one_setting_at_a_time() {
+        let root = unique_temp_dir("ragrig-gpui-layers");
+        let global = root.join("home/.ragrig/config.json");
+        let workspace = root.join("paper/.ragrig/config.json");
+        std::fs::create_dir_all(global.parent().expect("global parent")).expect("global dir");
+        std::fs::create_dir_all(workspace.parent().expect("workspace parent"))
+            .expect("workspace dir");
+        std::fs::write(
+            &global,
+            r#"{"chat":{"model":"global-chat"},"embed":{"top_k":12},"parse":{"chunk_size":512}}"#,
+        )
+        .expect("global layer");
+        std::fs::write(
+            &workspace,
+            r#"{"chat":{"model":"local-chat"},"hybrid":false,"parse":{"chunk_overlap":32}}"#,
+        )
+        .expect("workspace layer");
+
+        let settings = RagSettings::from_layer_paths(Some(&global), &workspace, None)
+            .expect("layered settings");
+        assert_eq!(settings.ollama_model, "local-chat", "workspace wins");
+        assert_eq!(settings.top_k, 12, "global wins over built-in");
+        assert_eq!(
+            settings.chunk_size, 512,
+            "global survives the workspace layer"
+        );
+        assert_eq!(settings.chunk_overlap, 32, "workspace fills a missing key");
+        assert!(!settings.hybrid, "the workspace hybrid extension is read");
+        assert_eq!(
+            settings.provider,
+            RagSettings::default().provider,
+            "untouched keys keep the built-in default"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_switches_survive_a_layer_without_them() {
+        let root = unique_temp_dir("ragrig-gpui-layer-switches");
+        let global = root.join("home/.ragrig/config.json");
+        let workspace = root.join("paper/.ragrig/config.json");
+        std::fs::create_dir_all(global.parent().expect("global parent")).expect("global dir");
+        std::fs::create_dir_all(workspace.parent().expect("workspace parent"))
+            .expect("workspace dir");
+        std::fs::write(&global, r#"{"chat":{"model":"layer-chat"}}"#).expect("layer");
+        std::fs::write(&workspace, r#"{"parse":{"chunk_size":256}}"#).expect("layer");
+
+        let mut base = fixture();
+        base.memory = MemoryChoice::Off;
+        base.hybrid = false;
+        let settings = RagSettings::from_layer_paths(Some(&global), &workspace, Some(&base))
+            .expect("layered settings");
+        assert_eq!(settings.ollama_model, "layer-chat");
+        assert_eq!(settings.chunk_size, 256);
+        assert_eq!(
+            settings.memory,
+            MemoryChoice::Off,
+            "runtime memory survives"
+        );
+        assert!(!settings.hybrid, "runtime retrieval switch survives");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

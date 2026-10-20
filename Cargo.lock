@@ -6382,9 +6382,11 @@ dependencies = [
  "biblatex",
  "blake3",
  "comrak",
+ "dirs 5.0.1",
  "gpui-kit",
  "grobid-bibtex",
  "ragrig",
+ "serde_json",
  "tokio",
 ]
 

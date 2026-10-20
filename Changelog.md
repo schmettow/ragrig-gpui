@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Layered Ragrig configuration.** `RagSettings::from_layers(workspace)`
+  merges `~/.ragrig/config.json` and `<workspace>/.ragrig/config.json` per
+  setting over the built-in defaults (workspace last). `home_ragrig_dir()`
+  honors `RAGRIG_HOME`. Profile listing now includes global profiles and
+  `load_profile` falls back from the workspace to `~/.ragrig`; a workspace
+  profile still wins and **Update Profile** stays workspace-local.
+- **Project data directory.** `RagSetup::data_dir` selects where the vector
+  store, sessions, and profiles live (default `<workspace>/.ragrig`). The
+  store therefore opens at `<data_dir>/.ragrig_store` instead of the workspace
+  root, which keeps a Sciscraper project to the layout described in its
+  `.sciscraper` descriptor.
 - **Switchable status-bar components.** `AgentComponent` now carries
   `ComponentToggle` switches, rendered in its popover. `AgentBarEvent::Toggle`
   reports `{component, toggle, enabled}` to the host. `ComponentKind::Memory`
