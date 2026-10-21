@@ -4,9 +4,17 @@
 //! particular application icon. A [`ChatIcon`] is either a catalog name, a path
 //! in the application's asset source, or SVG bytes compiled into the binary.
 
-use std::{fmt, sync::Arc};
+use std::{
+    collections::hash_map::DefaultHasher,
+    fmt,
+    hash::{Hash as _, Hasher as _},
+    sync::Arc,
+};
 
-use gpui_kit::{SharedString, assets::IconName, component::Icon};
+use gpui_kit::{
+    AnyElement, Image, ImageFormat, ImageSource, IntoElement, Pixels, SharedString, Styled as _,
+    assets::IconName, component::Icon, img, px,
+};
 
 /// An icon the host can plug into [`crate::EmptyState`] or
 /// [`crate::ChatIdentity`].
@@ -21,6 +29,11 @@ pub enum ChatIcon {
     /// This needs no asset registration, which suits a logo that lives in the
     /// binary: `ChatIcon::data(include_bytes!("../assets/logo.svg"))`.
     Data(Arc<[u8]>),
+    /// Full-colour PNG bytes.
+    ///
+    /// GPUI paints SVG icons as a monochrome alpha mask. A multi-colour mark
+    /// must therefore be a raster image; [`Self::png`] builds one.
+    Png(Arc<Image>),
 }
 
 impl ChatIcon {
@@ -35,13 +48,46 @@ impl ChatIcon {
         Self::Path(path.into())
     }
 
-    /// Build the renderable icon. Size and colour are inherited from the
-    /// surrounding text style.
-    pub(crate) fn view(&self) -> Icon {
+    /// Wrap full-colour PNG bytes for an image element.
+    pub fn png(bytes: impl AsRef<[u8]>) -> Self {
+        let bytes = bytes.as_ref();
+        let mut hasher = DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        Self::Png(Arc::new(Image {
+            format: ImageFormat::Png,
+            bytes: bytes.to_vec(),
+            id: hasher.finish(),
+        }))
+    }
+
+    /// The monochrome icon, when this mark is an SVG icon.
+    ///
+    /// Buttons need an [`Icon`]; a raster mark has no monochrome form, so the
+    /// caller should fall back to a catalog icon.
+    pub(crate) fn as_icon(&self) -> Option<Icon> {
         match self {
-            Self::Named(name) => Icon::new(*name),
-            Self::Path(path) => Icon::default().path(path.clone()),
-            Self::Data(bytes) => Icon::default().data(bytes),
+            Self::Named(name) => Some(Icon::new(*name)),
+            Self::Path(path) => Some(Icon::default().path(path.clone())),
+            Self::Data(bytes) => Some(Icon::default().data(bytes)),
+            Self::Png(_) => None,
+        }
+    }
+
+    /// Render the mark at an explicit size, or at the surrounding text size
+    /// for SVG icons. Raster marks default to 24 px when no size is given.
+    pub(crate) fn element(&self, size: Option<Pixels>) -> AnyElement {
+        if let Self::Png(image) = self {
+            return img(ImageSource::Image(image.clone()))
+                .size(size.unwrap_or(px(24.)))
+                .into_any_element();
+        }
+
+        let icon = self
+            .as_icon()
+            .unwrap_or_else(|| Icon::new(IconName::Sparkles));
+        match size {
+            Some(size) => icon.size(size).into_any_element(),
+            None => icon.into_any_element(),
         }
     }
 }
@@ -49,6 +95,18 @@ impl ChatIcon {
 impl From<IconName> for ChatIcon {
     fn from(name: IconName) -> Self {
         Self::Named(name)
+    }
+}
+
+impl PartialEq for ChatIcon {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Named(a), Self::Named(b)) => a == b,
+            (Self::Path(a), Self::Path(b)) => a == b,
+            (Self::Data(a), Self::Data(b)) => a == b,
+            (Self::Png(a), Self::Png(b)) => a == b,
+            _ => false,
+        }
     }
 }
 
@@ -66,6 +124,10 @@ impl fmt::Debug for ChatIcon {
             Self::Data(bytes) => f
                 .debug_tuple("Data")
                 .field(&format_args!("{} bytes", bytes.len()))
+                .finish(),
+            Self::Png(image) => f
+                .debug_tuple("Png")
+                .field(&format_args!("{} bytes", image.bytes.len()))
                 .finish(),
         }
     }
@@ -100,5 +162,13 @@ mod tests {
     fn a_catalog_icon_converts() {
         let icon: ChatIcon = IconName::Bot.into();
         assert!(matches!(icon, ChatIcon::Named(IconName::Bot)));
+    }
+
+    #[test]
+    fn a_raster_mark_has_no_monochrome_form() {
+        let icon = ChatIcon::png(b"not decoded here");
+        assert!(matches!(icon, ChatIcon::Png(_)));
+        assert!(icon.as_icon().is_none());
+        assert_eq!(icon, ChatIcon::png(b"not decoded here"));
     }
 }

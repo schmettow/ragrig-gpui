@@ -527,7 +527,7 @@ fn empty_view(empty: &EmptyState, theme: &Theme) -> AnyElement {
         .items_center()
         .justify_center()
         .gap_2()
-        .child(empty.icon.view().size(px(56.)))
+        .child(empty.icon.element(Some(px(56.))))
         .child(
             div()
                 .text_lg()
@@ -661,7 +661,7 @@ fn role_header(
     h_flex()
         .items_center()
         .gap_2()
-        .child(div().text_color(color).child(icon.view()))
+        .child(div().text_color(color).child(icon.element(None)))
         .child(
             div()
                 .text_sm()

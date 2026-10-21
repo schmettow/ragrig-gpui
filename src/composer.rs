@@ -5,7 +5,7 @@ use gpui_kit::{
     IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription, Window,
     assets::IconName,
     component::{
-        ActiveTheme as _, Disableable as _, Sizable as _,
+        ActiveTheme as _, Disableable as _, Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
         input::{InputEvent, Textarea, TextareaState},
@@ -13,6 +13,8 @@ use gpui_kit::{
     },
     div,
 };
+
+use crate::icon::ChatIcon;
 
 /// What the host should do after the composer was used.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +37,7 @@ pub struct Composer {
     disabled: bool,
     pending_clear: bool,
     hint: Option<SharedString>,
+    send_icon: ChatIcon,
     _input: Subscription,
 }
 
@@ -61,8 +64,24 @@ impl Composer {
             disabled: false,
             pending_clear: false,
             hint: None,
+            send_icon: ChatIcon::Named(IconName::Send),
             _input: input,
         }
+    }
+
+    /// Replace the send button's mark.
+    ///
+    /// A raster [`ChatIcon`] has no monochrome form, so the send button falls
+    /// back to the catalog `Send` icon.
+    pub fn send_icon(mut self, icon: impl Into<ChatIcon>) -> Self {
+        self.send_icon = icon.into();
+        self
+    }
+
+    /// Replace the send button's mark and redraw.
+    pub fn set_send_icon(&mut self, icon: impl Into<ChatIcon>, cx: &mut Context<Self>) {
+        self.send_icon = icon.into();
+        cx.notify();
     }
 
     /// The underlying textarea, for hosts that need selection or IME access.
@@ -182,7 +201,11 @@ impl Render for Composer {
                 .on_click(cx.listener(|this, _, _, cx| this.submit_or_stop(cx)))
         } else {
             Button::new(action_id)
-                .icon(IconName::Send)
+                .icon(
+                    self.send_icon
+                        .as_icon()
+                        .unwrap_or_else(|| Icon::new(IconName::Send)),
+                )
                 .label("Send")
                 .primary()
                 .small()

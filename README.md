@@ -227,13 +227,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 119 library tests (including ten actor tests with a fake
+Current suite: 125 library tests (including ten actor tests with a fake
 generator and embedder, context-format and budgeting tests, citation-resolution
 tests, field-level pending-change tests, retrieval enrichment, catalog and
-inline-SVG rasteriser checks, agent-bar popover bounds, and GPUI hover,
-selection and bulk-clipboard tests), 2 gallery tests, 5 active spike tests plus
-one ignored typing benchmark, and 2 doctests. One GROBID end-to-end test is
-ignored by default:
+inline/raster mark checks, agent-bar popover bounds, GPUI number-field typing,
+blur validation and warning bounds, and GPUI hover, selection and
+bulk-clipboard tests), 2 gallery tests, 5 active spike tests plus one ignored
+typing benchmark, and 2 doctests. One GROBID end-to-end test is ignored by
+default:
 
 ```sh
 cargo test --all-features grobid_extracts_the_test_library_end_to_end \

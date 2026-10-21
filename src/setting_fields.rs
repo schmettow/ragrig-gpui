@@ -8,24 +8,24 @@
 //! style its title, so unsaved settings use [`SettingRow`], which draws the
 //! title itself and marks it while it differs from the applied configuration.
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use gpui_kit::{
     Anchor, AnyElement, App, AppContext as _, Axis, ElementId, Entity, FontWeight, Hsla,
-    IntoElement, ParentElement as _, PathPromptOptions, SharedString, Styled as _, Subscription,
-    Window,
+    InteractiveElement as _, IntoElement, ParentElement as _, PathPromptOptions, SharedString,
+    Styled as _, Subscription, Window,
     component::{
         ActiveTheme as _, AxisExt as _, Disableable as _, Sizable as _,
         button::Button,
         h_flex,
-        input::{Input, InputEvent, InputState, NumberInput},
+        input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
         menu::{DropdownMenu, PopupMenuItem},
         setting::{NumberFieldOptions, RenderOptions, SettingField, SettingItem},
         slider::{Slider, SliderEvent, SliderState},
         switch::Switch,
         v_flex,
     },
-    hsla,
+    div, hsla,
     prelude::FluentBuilder as _,
     px,
 };
@@ -39,6 +39,7 @@ type PathSetter = Rc<dyn Fn(String, &mut App)>;
 type TokenSetter = Rc<dyn Fn(usize, &mut App)>;
 type TextSetter = Rc<dyn Fn(String, &mut App)>;
 type NumberSetter = Rc<dyn Fn(f64, &mut App)>;
+type NumberReader = Rc<dyn Fn(&App) -> f64>;
 type SwitchSetter = Rc<dyn Fn(bool, &mut App)>;
 
 /// A path field with a **Browse…** button.
@@ -439,6 +440,13 @@ struct TextControlState {
     _subscription: Subscription,
 }
 
+struct NumberControlState {
+    input: Entity<InputState>,
+    shown: f64,
+    warning: Rc<RefCell<Option<SharedString>>>,
+    _subscriptions: Vec<Subscription>,
+}
+
 /// A one-line text control.
 pub fn text_control<V, W>(key: &'static str, value: V, write: W) -> Control
 where
@@ -491,7 +499,12 @@ where
     })
 }
 
-/// A numeric control with the same stepping and bounds as the stock field.
+/// A numeric control that commits on Enter or blur.
+///
+/// Typing is never clamped or rewritten mid-draft: `0.03` stays `0.0`+
+/// `3` until it is committed. Stepper clicks and Up/Down apply one step
+/// immediately. An invalid draft keeps the previous value and shows the bound
+/// under the field.
 pub fn number_control<V, W>(
     key: &'static str,
     options: NumberFieldOptions,
@@ -503,55 +516,201 @@ where
     W: Fn(f64, &mut App) + 'static,
 {
     let write: NumberSetter = Rc::new(write);
+    let read: NumberReader = Rc::new(value);
     let key = SharedString::from(key);
     control(move |render_options, window, cx| {
-        let current = value(cx);
+        let current = read(cx);
         let keyed = SharedString::from(format!(
             "row-number-{key}-{}-{}-{}",
             render_options.page_ix(),
             render_options.group_ix(),
             render_options.item_ix()
         ));
-        let options = options.clone();
+        let options_for_state = options.clone();
         let setter = write.clone();
+        let reader = read.clone();
         let state = window.use_keyed_state(keyed, cx, move |window, cx| {
             let input = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .default_value(current.to_string())
-                    .step(options.step)
-                    .min(options.min)
-                    .max(options.max)
+                // Bounds and step stay off the engine: it would clamp on blur
+                // before this control can warn and restore the previous value.
+                InputState::new(window, cx).default_value(current.to_string())
             });
-            let subscription = cx.subscribe(&input, move |_, input, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change)
-                    && let Ok(value) = input.read(cx).value().trim().parse::<f64>()
-                {
-                    setter(value, cx);
+            let draft = Rc::new(RefCell::new(current.to_string()));
+            let warning = Rc::new(RefCell::new(None::<SharedString>));
+
+            let commit = {
+                let setter = setter.clone();
+                let reader = reader.clone();
+                let warning = warning.clone();
+                let options = options_for_state.clone();
+                move |text: &str, input: &Entity<InputState>, window: &mut Window, cx: &mut App| {
+                    let previous = reader(cx);
+                    match validate_number(text, options.min, options.max) {
+                        Ok(value) => {
+                            *warning.borrow_mut() = None;
+                            setter(value, cx);
+                        }
+                        Err(message) => {
+                            input.update(cx, |input, cx| {
+                                input.set_value(previous.to_string(), window, cx);
+                            });
+                            *warning.borrow_mut() = Some(message.into());
+                            // A same-value write redraws the row so the
+                            // warning appears.
+                            setter(previous, cx);
+                        }
+                    }
+                }
+            };
+
+            let input_events = cx.subscribe_in(&input, window, {
+                let setter = setter.clone();
+                let reader = reader.clone();
+                let warning = warning.clone();
+                let draft = draft.clone();
+                move |_, input, event: &InputEvent, window, cx| match event {
+                    InputEvent::Change => {
+                        let text = input.read(cx).value().to_string();
+                        *draft.borrow_mut() = text.clone();
+                        // `set_value` reports a Change of its own. Keep the
+                        // warning while the field still shows the restored
+                        // value; a real edit differs and dismisses it.
+                        if warning.borrow().is_some() && text != reader(cx).to_string() {
+                            *warning.borrow_mut() = None;
+                            setter(reader(cx), cx);
+                        }
+                    }
+                    InputEvent::PressEnter { .. } => {
+                        let text = input.read(cx).value().to_string();
+                        commit(&text, input, window, cx);
+                    }
+                    InputEvent::Blur => {
+                        // The engine may already have clamped the text; judge
+                        // the draft the user actually typed.
+                        let text = draft.borrow().clone();
+                        commit(&text, input, window, cx);
+                    }
+                    InputEvent::Focus => {}
                 }
             });
-            TextControlState {
+
+            let step_events = cx.subscribe_in(&input, window, {
+                let setter = setter.clone();
+                let reader = reader.clone();
+                let warning = warning.clone();
+                let draft = draft.clone();
+                let options = options_for_state.clone();
+                move |_, input, event: &NumberInputEvent, window, cx| {
+                    let NumberInputEvent::Step(action) = event;
+                    let next = step_number(reader(cx), *action, &options);
+                    *warning.borrow_mut() = None;
+                    *draft.borrow_mut() = next.to_string();
+                    input.update(cx, |input, cx| {
+                        input.set_value(next.to_string(), window, cx);
+                    });
+                    setter(next, cx);
+                }
+            });
+
+            NumberControlState {
                 input,
-                _subscription: subscription,
+                shown: current,
+                warning,
+                _subscriptions: vec![input_events, step_events],
             }
         });
-        let input = state.read(cx).input.clone();
-        if input.read(cx).value() != current.to_string() {
+
+        let (input, shown, warning) = {
+            let state = state.read(cx);
+            (
+                state.input.clone(),
+                state.shown,
+                state.warning.borrow().clone(),
+            )
+        };
+        // Sync only when the committed value moved. Comparing the displayed
+        // text on every render would eat the trailing dot of a draft.
+        if shown != current {
             input.update(cx, |input, cx| {
                 input.set_value(current.to_string(), window, cx);
             });
+            state.update(cx, |state, _| state.shown = current);
         }
-        NumberInput::new(&input)
-            .disabled(render_options.is_disabled())
-            .with_size(render_options.size())
-            .map(|this| {
-                if render_options.layout().is_horizontal() {
-                    this.w_32()
-                } else {
-                    this.w_full()
-                }
-            })
-            .into_any_element()
+
+        let field = div().debug_selector(|| format!("{key}-number")).child(
+            NumberInput::new(&input)
+                .disabled(render_options.is_disabled())
+                .with_size(render_options.size())
+                .map(|this| {
+                    if render_options.layout().is_horizontal() {
+                        this.w_32()
+                    } else {
+                        this.w_full()
+                    }
+                }),
+        );
+        match warning {
+            Some(message) => v_flex()
+                .gap_1()
+                .child(field)
+                .child(
+                    div()
+                        .debug_selector(|| format!("{key}-number-warning"))
+                        .text_xs()
+                        .text_color(cx.theme().danger)
+                        .child(message),
+                )
+                .into_any_element(),
+            None => field.into_any_element(),
+        }
     })
+}
+
+fn validate_number(text: &str, min: f64, max: f64) -> Result<f64, String> {
+    let Ok(value) = text.trim().parse::<f64>() else {
+        return Err(number_range_message(min, max));
+    };
+    if !value.is_finite() {
+        return Err("Enter a finite number.".to_owned());
+    }
+    if !(min..=max).contains(&value) {
+        return Err(number_range_message(min, max));
+    }
+    Ok(value)
+}
+
+fn number_range_message(min: f64, max: f64) -> String {
+    match (min > f64::MIN, max < f64::MAX) {
+        (true, true) => format!("Enter a number between {min} and {max}."),
+        (true, false) => format!("Enter a number of at least {min}."),
+        (false, true) => format!("Enter a number of at most {max}."),
+        (false, false) => "Enter a valid number.".to_owned(),
+    }
+}
+
+fn step_number(current: f64, action: StepAction, options: &NumberFieldOptions) -> f64 {
+    let delta = match action {
+        StepAction::Increment => options.step,
+        StepAction::Decrement => -options.step,
+    };
+    round_to_step(
+        (current + delta).clamp(options.min, options.max),
+        options.step,
+    )
+}
+
+/// Drop binary noise such as `0.30000000000000004` after repeated stepping.
+fn round_to_step(value: f64, step: f64) -> f64 {
+    let step = step.abs();
+    if !step.is_finite() || step == 0.0 {
+        return value;
+    }
+    let decimals = step
+        .to_string()
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len());
+    let factor = 10f64.powi(decimals as i32);
+    (value * factor).round() / factor
 }
 
 /// A switch control.
@@ -630,7 +789,69 @@ where
 
 #[cfg(test)]
 mod tests {
+    use gpui_kit::{Context, Modifiers, Render, TestAppContext, VisualTestContext};
+
     use super::*;
+
+    struct NumberModel {
+        value: f64,
+    }
+
+    struct NumberHost {
+        model: Entity<NumberModel>,
+        control: Control,
+    }
+
+    impl NumberHost {
+        fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+            let model = cx.new(|_| NumberModel { value: 0.5 });
+            let reader = model.clone();
+            let writer = model.clone();
+            let control = number_control(
+                "test-threshold",
+                NumberFieldOptions {
+                    min: 0.0,
+                    max: 1.0,
+                    step: 0.01,
+                },
+                move |cx| reader.read(cx).value,
+                move |value, cx| {
+                    writer.update(cx, |model, cx| {
+                        model.value = value;
+                        cx.notify();
+                    });
+                },
+            );
+            cx.observe(&model, |_, _, cx| cx.notify()).detach();
+            Self { model, control }
+        }
+    }
+
+    impl Render for NumberHost {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .w(px(320.))
+                .p_4()
+                .child((self.control)(&RenderOptions::new(), window, cx))
+        }
+    }
+
+    fn value(host: &Entity<NumberHost>, cx: &mut VisualTestContext) -> f64 {
+        cx.update(|_, cx| host.read(cx).model.read(cx).value)
+    }
+
+    fn focus_and_replace(cx: &mut VisualTestContext) {
+        let bounds = cx
+            .debug_bounds("test-threshold-number")
+            .expect("number field bounds");
+        // The debug wrapper spans the row; the 128 px number field sits at its
+        // left edge. Click inside that field, not the wrapper's centre.
+        cx.simulate_click(
+            gpui_kit::point(bounds.origin.x + px(64.), bounds.center().y),
+            Modifiers::default(),
+        );
+        cx.simulate_keystrokes("ctrl-a");
+    }
 
     #[test]
     fn token_values_snap_to_powers_of_two() {
@@ -652,5 +873,75 @@ mod tests {
     fn a_non_power_value_rounds_to_the_nearest_step() {
         assert_eq!(exponent_for(1_500, 9, 20), 10);
         assert_eq!(exponent_for(1_800, 9, 20), 11);
+    }
+
+    #[test]
+    fn decimal_drafts_are_judged_only_when_complete() {
+        assert_eq!(validate_number("0.03", 0.0, 1.0), Ok(0.03));
+        assert_eq!(validate_number("0.", 0.0, 1.0), Ok(0.0));
+        assert!(validate_number("", 0.0, 1.0).is_err());
+        assert!(validate_number("1.5", 0.0, 1.0).is_err());
+        assert!(validate_number("abc", 0.0, 1.0).is_err());
+    }
+
+    #[test]
+    fn an_invalid_draft_explains_the_bound() {
+        assert_eq!(
+            number_range_message(0.0, 1.0),
+            "Enter a number between 0 and 1."
+        );
+    }
+
+    #[test]
+    fn stepping_clamps_and_drops_binary_noise() {
+        let options = NumberFieldOptions {
+            min: 0.0,
+            max: 1.0,
+            step: 0.01,
+        };
+        assert_eq!(step_number(0.5, StepAction::Increment, &options), 0.51);
+        assert_eq!(step_number(0.0, StepAction::Decrement, &options), 0.0);
+        assert_eq!(step_number(1.0, StepAction::Increment, &options), 1.0);
+    }
+
+    #[gpui_kit::test]
+    fn a_decimal_commits_on_enter_not_per_keystroke(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let (host, cx) = cx.add_window_view(NumberHost::new);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        focus_and_replace(cx);
+
+        cx.simulate_input("0.03");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            value(&host, cx),
+            0.5,
+            "the setting must not see intermediate keystrokes"
+        );
+
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(value(&host, cx), 0.03);
+    }
+
+    #[gpui_kit::test]
+    fn an_out_of_range_decimal_warns_and_restores(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let (host, cx) = cx.add_window_view(NumberHost::new);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        focus_and_replace(cx);
+
+        cx.simulate_input("1.5");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        for _ in 0..2 {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+        assert_eq!(value(&host, cx), 0.5);
+        assert!(
+            cx.debug_bounds("test-threshold-number-warning").is_some(),
+            "the row must explain the bound"
+        );
     }
 }

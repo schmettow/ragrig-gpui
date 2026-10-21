@@ -416,6 +416,15 @@ impl RagController {
             };
             let components = vec![
                 AgentComponent::new("chat", ComponentKind::Chat, "Chat model").status(status),
+                // Memory belongs beside the chat model: it shapes the prompt.
+                AgentComponent::new("memory", ComponentKind::Memory, "Chat memory")
+                    .status(memory_status)
+                    .detail(if self.memory_enabled {
+                        "conversation memory"
+                    } else {
+                        "off · no transcript or rewriting"
+                    })
+                    .toggle(memory_toggle),
                 AgentComponent::new("embed", ComponentKind::Embedder, "Embedder")
                     .status(retrieval_status)
                     .detail(if self.hybrid {
@@ -434,14 +443,6 @@ impl RagController {
                         "off · no embeddings"
                     })
                     .toggle(hybrid_toggle),
-                AgentComponent::new("memory", ComponentKind::Memory, "Chat memory")
-                    .status(memory_status)
-                    .detail(if self.memory_enabled {
-                        "conversation memory"
-                    } else {
-                        "off · no transcript or rewriting"
-                    })
-                    .toggle(memory_toggle),
             ];
             #[cfg(feature = "grobid")]
             let components = {
@@ -480,6 +481,15 @@ impl RagController {
             AgentComponent::new("chat", ComponentKind::Chat, agent.chat_model.clone())
                 .status(chat)
                 .detail(format!("{} · {} memory", agent.chat_backend, agent.memory)),
+            // Memory belongs beside the chat model: it shapes the prompt.
+            AgentComponent::new("memory", ComponentKind::Memory, "Chat memory")
+                .status(memory_status)
+                .detail(if self.memory_enabled {
+                    format!("{} strategy", agent.memory)
+                } else {
+                    "off · no transcript or rewriting".to_owned()
+                })
+                .toggle(memory_toggle),
             AgentComponent::new(
                 "embed",
                 ComponentKind::Embedder,
@@ -519,14 +529,6 @@ impl RagController {
                     "off · no embeddings".to_owned()
                 })
                 .toggle(hybrid_toggle),
-            AgentComponent::new("memory", ComponentKind::Memory, "Chat memory")
-                .status(memory_status)
-                .detail(if self.memory_enabled {
-                    format!("{} strategy", agent.memory)
-                } else {
-                    "off · no transcript or rewriting".to_owned()
-                })
-                .toggle(memory_toggle),
         ];
         #[cfg(feature = "grobid")]
         let components = {

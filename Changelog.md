@@ -26,6 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `IconName::Brain` label the new voice. `RagController::agent_components()`
   adds **Chat memory** and extends **Hybrid retrieval** with switches, and the
   controller mirrors both values through `memory_enabled()` and `hybrid()`.
+- **Host-supplied component marks.** `AgentComponent::icon` overrides the
+  catalog icon of one pipeline component; `AgentBar` falls back to the kind's
+  icon for raster marks. `RagController::agent_components()` now places **Chat
+  memory** directly after the chat model. `Composer::send_icon` / `send_icon()`
+  brand the send button.
+- **Full-colour marks.** `ChatIcon::png` wraps image bytes for `img` rather
+  than the alpha-masked `svg` element, so a multi-colour logo keeps its
+  colours. `EmptyState` renders such a mark at 56 px; `ChatIcon::as_icon()`
+  still returns the monochrome form used by buttons.
+- **Deferred numeric validation.** `number_control` now leaves the draft alone
+  while typing, commits on Enter or blur, applies stepper clicks immediately,
+  and shows the accepted range under the field when a draft is rejected. It
+  keeps the previous value instead of clamping mid-keystroke.
 - **Hybrid retrieval switch.** `RagSettings::hybrid` (default on) and
   `RagSetup::hybrid` reach the worker. Off builds `EmbedderSpec::None`, so no
   embedding model is required and vector search is skipped; attached documents
@@ -113,6 +126,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clips when the settings surface is narrow.
 - Vertical rows (system prompt, folder corpora) now give their control the full
   row width.
+- Decimal settings accept a complete draft such as `0.03` again. The old
+  control committed every keystroke and rewrote the field, so the trailing dot
+  became out-of-range and flipped to `1`. `a_decimal_commits_on_enter_not_per_keystroke`
+  and `an_out_of_range_decimal_warns_and_restores` cover the widget.
+- A monochrome Scico mark keeps transparent gaps between its rings; the
+  previous concentric filled discs would have collapsed into a solid dot under
+  GPUI's alpha-mask painting.
 - Agent-bar component popovers keep their switches inside the content box. The
   label column may shrink (`min_w(0.)`), the switch does not (`flex_none()`),
   and the content no longer adds a second padding on top of the popover shell.

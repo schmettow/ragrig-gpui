@@ -2,6 +2,8 @@
 
 use gpui_kit::assets::IconName;
 
+use crate::icon::ChatIcon;
+
 /// The role a component plays in the RAG pipeline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ComponentKind {
@@ -141,6 +143,8 @@ pub struct AgentComponent {
     pub status: ComponentStatus,
     /// Optional detail line: backend, model, last error.
     pub detail: Option<String>,
+    /// Optional mark overriding the kind's catalog icon.
+    pub icon: Option<ChatIcon>,
     /// Switches offered in the component popover.
     pub toggles: Vec<ComponentToggle>,
 }
@@ -154,8 +158,18 @@ impl AgentComponent {
             label: label.into(),
             status: ComponentStatus::default(),
             detail: None,
+            icon: None,
             toggles: Vec::new(),
         }
+    }
+
+    /// Replace the catalog icon with a host-supplied mark.
+    ///
+    /// Buttons need a monochrome form; a raster mark falls back to the kind's
+    /// catalog icon.
+    pub fn icon(mut self, icon: impl Into<ChatIcon>) -> Self {
+        self.icon = Some(icon.into());
+        self
     }
 
     /// Set the status.

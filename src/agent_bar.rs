@@ -139,6 +139,12 @@ fn component_button(
         format!("{} · {}", component.label, component.status.label())
     };
 
+    let icon = component
+        .icon
+        .as_ref()
+        .and_then(|icon| icon.as_icon())
+        .unwrap_or_else(|| gpui_kit::component::Icon::new(component.kind.icon()));
+
     let content_component = component.clone();
     let content_handler = handler.clone();
     let content_prefix = prefix.clone();
@@ -147,7 +153,7 @@ fn component_button(
         .trigger(
             Button::new(trigger_id)
                 .debug_selector(|| format!("{prefix}-{index}-trigger"))
-                .icon(component.kind.icon())
+                .icon(icon)
                 .ghost()
                 .small()
                 .rounded(px(4.))
