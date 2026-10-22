@@ -9,7 +9,7 @@
 //! agent a [`Roundtrip`]. Swapping the editor backend (zorite, gpuikit, …)
 //! leaves the protocol and the agent untouched.
 
-mod bibtex;
+pub(crate) mod bibtex;
 mod host;
 mod protocol;
 

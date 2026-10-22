@@ -131,6 +131,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A malformed bibliography reports a readable position instead of the raw
+  byte span: `cannot parse '<path>' at line 5 (@Broken): expected =`.
+  `load_entries` parses the source itself and `editor::bibtex_entry_location`
+  names the line and the nearest `@type{key` header. A file that cannot be
+  read names the reference being looked up (`cannot read '<path>' for @Key: …`).
 - Profile defaults and profiles without a prompt file restore the host's
   compiled-in prompt instead of Ragrig's generic stub.
 - Path fields shrink to the controls column; the **Browse…** button no longer

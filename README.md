@@ -294,7 +294,9 @@ the link error in CI.
   `RoundtripHost::bibliography` names the `.bib`, `open_at` opens or focuses it
   at a character offset, and the default `edit_reference` locates the key on
   disk with `bibtex_entry_offset`. `EditorSurface::reveal` is the editor half,
-  so a host only implements tab handling and caret placement.
+  so a host only implements tab handling and caret placement. A malformed
+  file is reported as `cannot parse '<path>' at line N (@Key): <reason>`;
+  `bibtex_entry_location` maps the parser's byte span to that position.
 - The checked-in `Cargo.lock` is intentional: `gpui-kit 0.7.3`'s optional
   `gpui-fast` branch pins `cocoa =0.26.0`, while a pre-existing lockfile may
   hold `0.26.1`. A fresh resolve succeeds; a stale one fails.

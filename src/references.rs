@@ -48,6 +48,8 @@ use grobid_bibtex::{
 };
 use ragrig::{AttachedDocument, DocumentParsers};
 
+use crate::editor::bibtex::bibtex_entry_location;
+
 /// Server and pipeline options for one reference extraction run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReferenceOptions {
@@ -531,8 +533,27 @@ pub(crate) async fn extract(
 
 /// Load reference rows from a merged bibliography.
 pub fn load_entries(bibliography: &Path, folder: &Path) -> Result<Vec<ReferenceEntry>, String> {
-    let collection = Collection::load_or_new(bibliography)
-        .map_err(|error| format!("cannot read '{}': {error}", bibliography.display()))?;
+    let collection = match std::fs::read_to_string(bibliography) {
+        Ok(source) => Collection::parse(&source).map_err(|error| {
+            let (line, key) = bibtex_entry_location(&source, error.span.start);
+            match key {
+                Some(key) => format!(
+                    "cannot parse '{}' at line {line} (@{key}): {}",
+                    bibliography.display(),
+                    error.kind
+                ),
+                None => format!(
+                    "cannot parse '{}' at line {line}: {}",
+                    bibliography.display(),
+                    error.kind
+                ),
+            }
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Collection::new(),
+        Err(error) => {
+            return Err(format!("cannot read '{}': {error}", bibliography.display()));
+        }
+    };
     let pdfs = collect_pdfs(folder).unwrap_or_default();
     let mut entries: Vec<ReferenceEntry> = collection
         .iter()
@@ -1218,6 +1239,24 @@ mod tests {
         let dir = temp_dir("missing");
         let entries = load_entries(&dir.join("missing.bib"), &dir).expect("entries");
         assert!(entries.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_parse_error_names_the_line_and_the_entry() {
+        let dir = temp_dir("parse-error");
+        let bib = dir.join("references.bib");
+        std::fs::write(
+            &bib,
+            "@article{Good,\n  title = {Fine},\n}\n@book{Broken,\n  title {Missing equals},\n}\n",
+        )
+        .expect("bib");
+
+        let error = load_entries(&bib, &dir).expect_err("parse error");
+        assert!(
+            error.contains("at line 5") && error.contains("@Broken"),
+            "unexpected error: {error}"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

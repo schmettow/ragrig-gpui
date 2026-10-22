@@ -188,7 +188,7 @@ pub trait RoundtripHost {
             return Err("No bibliography configured".to_owned());
         };
         let text = std::fs::read_to_string(&path)
-            .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+            .map_err(|error| format!("cannot read '{}' for @{key}: {error}", path.display()))?;
         let Some(offset) = bibtex_entry_offset(&text, key) else {
             return Err(format!("Entry @{key} is not in {}", path.display()));
         };

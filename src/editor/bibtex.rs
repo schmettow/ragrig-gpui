@@ -1,8 +1,18 @@
 //! Locate a BibTeX entry by its citation key.
 //!
-//! The offset is **char-indexed**, matching the rest of the editor contract.
+//! Offsets are **char-indexed**, matching the rest of the editor contract.
 //! Entries start with `@type{key,` or `@type(key,`; whitespace after the
 //! opening delimiter is allowed, and `@` signs inside field values are ignored.
+
+/// One `@type{key` header found in a bibliography.
+struct EntryHeader {
+    /// Byte offset of the `@`.
+    byte_offset: usize,
+    /// The same offset counted in chars.
+    char_offset: usize,
+    /// The citation key.
+    key: String,
+}
 
 /// The character offset of the entry whose key matches `key`.
 ///
@@ -10,6 +20,39 @@
 /// when no entry carries the key.
 #[must_use]
 pub fn bibtex_entry_offset(text: &str, key: &str) -> Option<usize> {
+    entry_headers(text)
+        .into_iter()
+        .find(|header| header.key.eq_ignore_ascii_case(key))
+        .map(|header| header.char_offset)
+}
+
+/// The 1-based line and the entry key at `byte_offset`.
+///
+/// A parser reports the byte span of a syntax error. This turns it into a
+/// human-readable position: the line number and the key of the nearest entry
+/// header at or before the offset. The key is `None` when the error precedes
+/// the first entry (for example in a broken preamble).
+///
+/// `byte_offset` clamps to the end of `text`.
+#[must_use]
+pub(crate) fn bibtex_entry_location(text: &str, byte_offset: usize) -> (usize, Option<String>) {
+    let offset = byte_offset.min(text.len());
+    let line = text.as_bytes()[..offset]
+        .iter()
+        .filter(|byte| **byte == b'\n')
+        .count()
+        + 1;
+    let key = entry_headers(text)
+        .into_iter()
+        .take_while(|header| header.byte_offset <= offset)
+        .last()
+        .map(|header| header.key);
+    (line, key)
+}
+
+/// Every parseable entry header, in source order.
+fn entry_headers(text: &str) -> Vec<EntryHeader> {
+    let mut headers = Vec::new();
     let mut search = 0;
     while let Some(relative) = text[search..].find('@') {
         let at = search + relative;
@@ -30,7 +73,7 @@ pub fn bibtex_entry_offset(text: &str, key: &str) -> Option<usize> {
         {
             continue;
         }
-        let entry_key: String = rest[open + 1..]
+        let key: String = rest[open + 1..]
             .trim_start()
             .chars()
             .take_while(|character| {
@@ -40,11 +83,13 @@ pub fn bibtex_entry_offset(text: &str, key: &str) -> Option<usize> {
                     && !character.is_whitespace()
             })
             .collect();
-        if entry_key.eq_ignore_ascii_case(key) {
-            return Some(text[..at].chars().count());
-        }
+        headers.push(EntryHeader {
+            byte_offset: at,
+            char_offset: text[..at].chars().count(),
+            key,
+        });
     }
-    None
+    headers
 }
 
 #[cfg(test)]
@@ -85,5 +130,25 @@ mod tests {
     fn offsets_are_char_indexed() {
         let text = "é\n@article{Kano2025,\n}\n";
         assert_eq!(bibtex_entry_offset(text, "Kano2025"), Some(2));
+    }
+
+    #[test]
+    fn locations_name_the_line_and_the_entry() {
+        let text =
+            "@article{Kano2025,\n  title = {Gaze},\n}\n\n@book{Mila2023,\n  title = {Sclera}\n";
+        let second = text.find("@book").expect("second entry");
+        assert_eq!(
+            bibtex_entry_location(text, second + 3),
+            (5, Some("Mila2023".to_owned()))
+        );
+        assert_eq!(
+            bibtex_entry_location(text, 6),
+            (1, Some("Kano2025".to_owned()))
+        );
+        assert_eq!(
+            bibtex_entry_location(text, usize::MAX),
+            (7, Some("Mila2023".to_owned()))
+        );
+        assert_eq!(bibtex_entry_location("junk\n@", 0), (1, None));
     }
 }
