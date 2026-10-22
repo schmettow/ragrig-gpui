@@ -69,6 +69,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and selection containers and routes replacements. The protocol
   (`RoundtripContext`, `Replacement`, `verified_bytes`, `replace_at`) moved here
   from `sciscraper-gpui`, so the editor backend is now swappable.
+- **Reference editing in the roundtrip.** `EditorSurface::reveal` places the
+  caret at a character offset and scrolls it into view. `RoundtripHost` gains
+  `bibliography()` and `open_at(path, offset)`, and its default
+  `edit_reference(key)` reads the configured `.bib`, locates the entry with the
+  new `editor::bibtex_entry_offset`, and asks the host to open it. Hosts that
+  keep the bibliography in memory override `edit_reference` to use the buffer.
+  `Roundtrip::{edit_reference, open_at}` expose the seam, and
+  `ReferenceRow::on_edit` adds the **Edit in BibTeX** action.
 - **Insertion in the editor contract.** `EditorSurface::insert_text` replaces
   the selection or inserts at `EditorSurface::caret` as one undo step, and the
   default `caret()` derives a character index from the snapshot's line/column.
@@ -100,6 +108,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `EditorSurface::reveal(&self, offset, window, cx)` is required.
+  A backend places the caret at the character offset and scrolls it into view;
+  a host-owned scroll view should also follow the caret.
 - **Breaking:** `rag_model_page(settings, changes, prompt, cx)` takes an
   optional `PromptActions` for the host buttons; `None` renders the prompt-file
   field alone.

@@ -11,7 +11,10 @@ use std::rc::Rc;
 
 use gpui_kit::{App, SharedString, Window};
 
-use super::protocol::{EditorBuffer, RoundtripContext, char_range_to_bytes};
+use super::{
+    bibtex::bibtex_entry_offset,
+    protocol::{EditorBuffer, RoundtripContext, char_range_to_bytes},
+};
 
 /// An owned snapshot of one editor document.
 ///
@@ -75,6 +78,13 @@ pub trait EditorSurface {
     fn replace(&self, range: Range<usize>, text: &str, window: &mut Window, cx: &mut App);
     /// Focus this editor.
     fn focus(&self, window: &mut Window, cx: &mut App);
+
+    /// Place the caret at `offset` (char-indexed) and scroll it into view.
+    ///
+    /// Used by the Library to reveal a reference in the bibliography. A
+    /// backend that already scrolls on a caret change may leave the scrolling
+    /// to its editor; a host-owned scroll view should also follow the caret.
+    fn reveal(&self, offset: usize, window: &mut Window, cx: &mut App);
 
     /// The caret as a char index, whether or not a selection is marked.
     ///
@@ -151,6 +161,44 @@ pub trait RoundtripHost {
     fn insert(&self, _text: &str, _window: &mut Window, _cx: &mut App) -> bool {
         false
     }
+    /// The bibliography file this host edits, if one is configured.
+    ///
+    /// The default [`Self::edit_reference`] reads this path from disk. Hosts
+    /// that keep the bibliography open override `edit_reference` to use the
+    /// in-memory buffer instead.
+    fn bibliography(&self, _cx: &App) -> Option<PathBuf> {
+        None
+    }
+
+    /// Open `path` (or focus it when already open) and reveal char `offset`.
+    ///
+    /// Returns `false` when the host cannot open the file. This is the file
+    /// side of the Library → Editor roundtrip; the host owns tabs and paths.
+    fn open_at(&self, _path: &Path, _offset: usize, _window: &mut Window, _cx: &mut App) -> bool {
+        false
+    }
+
+    /// Open the bibliography at the entry for `key`.
+    ///
+    /// The default implementation locates the key in the file on disk and
+    /// calls [`Self::open_at`]. A host with an open, possibly unsaved
+    /// bibliography overrides this to use its buffer.
+    fn edit_reference(&self, key: &str, window: &mut Window, cx: &mut App) -> Result<(), String> {
+        let Some(path) = self.bibliography(cx) else {
+            return Err("No bibliography configured".to_owned());
+        };
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+        let Some(offset) = bibtex_entry_offset(&text, key) else {
+            return Err(format!("Entry @{key} is not in {}", path.display()));
+        };
+        if self.open_at(&path, offset, window, cx) {
+            Ok(())
+        } else {
+            Err(format!("'{}' could not be opened", path.display()))
+        }
+    }
+
     /// Write a replacement back, guarded by the selection digest.
     fn apply_replacement(
         &self,
@@ -265,6 +313,21 @@ impl Roundtrip {
     pub fn insert(&self, text: &str, window: &mut Window, cx: &mut App) -> bool {
         self.host.insert(text, window, cx)
     }
+
+    /// Open the host's bibliography at the entry for `key`.
+    pub fn edit_reference(
+        &self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), String> {
+        self.host.edit_reference(key, window, cx)
+    }
+
+    /// Open `path` (or focus it) and reveal char `offset`.
+    pub fn open_at(&self, path: &Path, offset: usize, window: &mut Window, cx: &mut App) -> bool {
+        self.host.open_at(path, offset, window, cx)
+    }
 }
 
 #[cfg(test)]
@@ -340,6 +403,74 @@ mod tests {
         }
 
         fn focus(&self, _: &mut Window, _: &mut App) {}
+
+        fn reveal(&self, offset: usize, window: &mut Window, cx: &mut App) {
+            *self.caret.borrow_mut() = offset;
+            *self.selection.borrow_mut() = None;
+            self.focus(window, cx);
+        }
+    }
+
+    struct MockHost {
+        bibliography: Option<PathBuf>,
+        opened: RefCell<Vec<(PathBuf, usize)>>,
+        can_open: bool,
+    }
+
+    impl MockHost {
+        fn with_bibliography(path: PathBuf) -> Self {
+            Self {
+                bibliography: Some(path),
+                opened: RefCell::new(Vec::new()),
+                can_open: true,
+            }
+        }
+    }
+
+    impl RoundtripHost for MockHost {
+        fn active_document(&self, _: &App) -> Option<EditorSnapshot> {
+            None
+        }
+
+        fn selection(&self, _: &mut Window, _: &mut App) -> Option<SelectionSnapshot> {
+            None
+        }
+
+        fn bibliography(&self, _: &App) -> Option<PathBuf> {
+            self.bibliography.clone()
+        }
+
+        fn open_at(&self, path: &Path, offset: usize, _: &mut Window, _: &mut App) -> bool {
+            self.opened.borrow_mut().push((path.to_path_buf(), offset));
+            self.can_open
+        }
+
+        fn apply_replacement(
+            &self,
+            _: ReplacementTarget,
+            _: &str,
+            _: &mut Window,
+            _: &mut App,
+        ) -> ReplacementOutcome {
+            ReplacementOutcome::Empty
+        }
+    }
+
+    fn temp_bibliography(label: &str) -> (PathBuf, PathBuf) {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "ragrig-gpui-host-{label}-{}-{counter}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("references.bib");
+        std::fs::write(
+            &path,
+            "@article{Kano2025,\n  title = {Gaze},\n}\n\n@book{Mila2023,\n  title = {Sclera},\n}\n",
+        )
+        .expect("bib");
+        (dir, path)
     }
 
     struct Root;
@@ -368,6 +499,62 @@ mod tests {
         let editor = MockEditor::new("hello world", 0).selected(0..5);
         cx.update(|window, cx| editor.insert_text("hi", window, cx));
         assert_eq!(editor.value(), "hi world");
+    }
+
+    #[gpui_kit::test]
+    fn the_default_edit_reference_opens_the_entry(cx: &mut gpui_kit::TestAppContext) {
+        let (dir, path) = temp_bibliography("edit");
+        let host = MockHost::with_bibliography(path.clone());
+        let (_root, cx) = cx.add_window_view(|_, _| Root);
+
+        let result = cx.update(|window, cx| {
+            host.edit_reference("Mila2023", window, cx)
+                .expect("entry is opened");
+            host.opened.borrow().clone()
+        });
+        let text = std::fs::read_to_string(&path).expect("bib");
+        assert_eq!(
+            result,
+            vec![(
+                path,
+                bibtex_entry_offset(&text, "Mila2023").expect("offset")
+            )]
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[gpui_kit::test]
+    fn the_default_edit_reference_reports_a_missing_key(cx: &mut gpui_kit::TestAppContext) {
+        let (dir, path) = temp_bibliography("missing-key");
+        let host = MockHost::with_bibliography(path);
+        let (_root, cx) = cx.add_window_view(|_, _| Root);
+
+        let error = cx.update(|window, cx| {
+            host.edit_reference("Nope", window, cx)
+                .expect_err("missing key")
+        });
+        assert!(error.contains("@Nope"), "unexpected error: {error}");
+        assert!(host.opened.borrow().is_empty());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[gpui_kit::test]
+    fn the_default_edit_reference_requires_a_bibliography(cx: &mut gpui_kit::TestAppContext) {
+        let host = MockHost {
+            bibliography: None,
+            opened: RefCell::new(Vec::new()),
+            can_open: true,
+        };
+        let (_root, cx) = cx.add_window_view(|_, _| Root);
+
+        let error = cx.update(|window, cx| {
+            host.edit_reference("Kano2025", window, cx)
+                .expect_err("no bibliography")
+        });
+        assert_eq!(error, "No bibliography configured");
+        assert!(host.opened.borrow().is_empty());
     }
 
     #[test]

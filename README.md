@@ -284,11 +284,17 @@ the link error in CI.
   counts both keys as resolved but attaches the document once. Misses never
   abort the question; they appear in the transcript note.
 - `ReferenceSelection` is keyed by citation key, so a refreshed list keeps the
-  selection. `ReferenceRow::on_select` adds the leading **+**;
-  `ReferenceSelectionBar` shows `N selected · @key1, @key2`, performs the bulk
-  copy actions, and reports **Insert** / **Attach** / **Clear** to the host,
-  which owns the editor, chat, and selection. It is full width, so it works as
-  a top bar or a footer.
+  selection. `ReferenceRow::on_select` adds the leading **+** and
+  `ReferenceRow::on_edit` adds the pencil that opens the host's bibliography at
+  that entry; `ReferenceSelectionBar` shows `N selected · @key1, @key2`,
+  performs the bulk copy actions, and reports **Insert** / **Attach** / **Clear**
+  to the host, which owns the editor, chat, and selection. It is full width, so
+  it works as a top bar or a footer.
+- The Library → bibliography roundtrip is backend-independent:
+  `RoundtripHost::bibliography` names the `.bib`, `open_at` opens or focuses it
+  at a character offset, and the default `edit_reference` locates the key on
+  disk with `bibtex_entry_offset`. `EditorSurface::reveal` is the editor half,
+  so a host only implements tab handling and caret placement.
 - The checked-in `Cargo.lock` is intentional: `gpui-kit 0.7.3`'s optional
   `gpui-fast` branch pins `cocoa =0.26.0`, while a pre-existing lockfile may
   hold `0.26.1`. A fresh resolve succeeds; a stale one fails.

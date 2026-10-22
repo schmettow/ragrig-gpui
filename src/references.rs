@@ -669,11 +669,13 @@ fn normalize_text(text: &str) -> String {
 }
 
 type CopyHandler = Rc<dyn Fn(ReferenceCopy, &mut Window, &mut App)>;
+type EditHandler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
 type SelectHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
-/// A two-line reference row with copy and selection actions.
+/// A two-line reference row with copy, edit, and selection actions.
 ///
-/// **Copy @key** and **Copy path** keep their slot at the trailing edge and
+/// The optional **Edit in BibTeX** action opens the host's bibliography at
+/// this key. **Copy @key** and **Copy path** keep their slot at the trailing edge and
 /// stay visible at reduced opacity, becoming fully opaque while the row is
 /// hovered. A **+** appears at the leading edge on hover. Every control keeps
 /// its slot in every frame, so the text never jumps when the actions appear. A
@@ -684,6 +686,7 @@ pub struct ReferenceRow {
     index: usize,
     entry: ReferenceEntry,
     on_copy: Option<CopyHandler>,
+    on_edit: Option<EditHandler>,
     on_select: Option<SelectHandler>,
     selectable: bool,
     selected: bool,
@@ -696,6 +699,7 @@ impl ReferenceRow {
             index,
             entry,
             on_copy: None,
+            on_edit: None,
             on_select: None,
             selectable: false,
             selected: false,
@@ -711,6 +715,12 @@ impl ReferenceRow {
         handler: impl Fn(ReferenceCopy, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_copy = Some(Rc::new(handler));
+        self
+    }
+
+    /// Add the **Edit in BibTeX** action and report the citation key.
+    pub fn on_edit(mut self, handler: impl Fn(&str, &mut Window, &mut App) + 'static) -> Self {
+        self.on_edit = Some(Rc::new(handler));
         self
     }
 
@@ -747,6 +757,7 @@ impl RenderOnce for ReferenceRow {
         let meta = self.entry.meta_line();
         let path = self.entry.path.clone();
         let handler = self.on_copy;
+        let edit_handler = self.on_edit;
         let selected = self.selected;
         let hover_bg = if selected {
             theme.primary.opacity(0.16)
@@ -836,6 +847,19 @@ impl RenderOnce for ReferenceRow {
             .tooltip("No PDF path"),
         };
 
+        let edit = edit_handler.map(|handler| {
+            let key = key.clone();
+            Button::new(ElementId::Name(
+                format!("reference-{}-edit", self.index).into(),
+            ))
+            .debug_selector(|| format!("reference-edit-{}", self.index))
+            .icon(IconName::Pencil)
+            .xsmall()
+            .ghost()
+            .tooltip("Edit in BibTeX")
+            .on_click(move |_, window, cx| handler(&key, window, cx))
+        });
+
         h_flex()
             .id(ElementId::Name(
                 format!("reference-row-{}", self.index).into(),
@@ -903,6 +927,7 @@ impl RenderOnce for ReferenceRow {
                     .gap_1()
                     .opacity(0.45)
                     .group_hover(group, |this| this.opacity(1.0))
+                    .when_some(edit, |row, edit| row.child(edit))
                     .child(
                         div()
                             .debug_selector(|| "reference-copy-key".to_owned())
@@ -1472,14 +1497,17 @@ mod tests {
     struct RowHost {
         entry: ReferenceEntry,
         copies: Rc<RefCell<Vec<ReferenceCopy>>>,
+        edits: Rc<RefCell<Vec<String>>>,
     }
 
     impl Render for RowHost {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let copies = Rc::clone(&self.copies);
+            let edits = Rc::clone(&self.edits);
             div().w(px(420.)).h(px(80.)).child(
                 ReferenceRow::new(0, self.entry.clone())
-                    .on_copy(move |copy, _, _| copies.borrow_mut().push(copy)),
+                    .on_copy(move |copy, _, _| copies.borrow_mut().push(copy))
+                    .on_edit(move |key, _, _| edits.borrow_mut().push(key.to_owned())),
             )
         }
     }
@@ -1500,9 +1528,12 @@ mod tests {
         };
         let copies = Rc::new(RefCell::new(Vec::new()));
         let copies_for_host = Rc::clone(&copies);
+        let edits = Rc::new(RefCell::new(Vec::new()));
+        let edits_for_host = Rc::clone(&edits);
         let (_, cx) = cx.add_window_view(move |_, _| RowHost {
             entry: entry.clone(),
             copies: Rc::clone(&copies_for_host),
+            edits: Rc::clone(&edits_for_host),
         });
         cx.update(|window, cx| window.draw(cx).clear(cx));
 
@@ -1541,6 +1572,12 @@ mod tests {
                 ReferenceCopy::Path(pdf),
             ]
         );
+
+        let edit = cx
+            .debug_bounds("reference-edit-0")
+            .expect("edit button bounds");
+        cx.simulate_click(edit.center(), Modifiers::default());
+        assert_eq!(edits.borrow().as_slice(), &["Kano2025".to_owned()]);
 
         let _ = std::fs::remove_dir_all(dir);
     }

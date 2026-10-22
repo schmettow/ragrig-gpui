@@ -9,9 +9,11 @@
 //! agent a [`Roundtrip`]. Swapping the editor backend (zorite, gpuikit, …)
 //! leaves the protocol and the agent untouched.
 
+mod bibtex;
 mod host;
 mod protocol;
 
+pub use bibtex::bibtex_entry_offset;
 pub use host::{
     EditorSnapshot, EditorSurface, ReplacementOutcome, ReplacementTarget, Roundtrip, RoundtripHost,
     SelectionContext, SelectionSnapshot, char_index_for_line_column,
