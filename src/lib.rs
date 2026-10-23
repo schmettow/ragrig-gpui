@@ -38,6 +38,8 @@ mod model;
 mod rag;
 #[cfg(feature = "grobid")]
 mod references;
+#[cfg(feature = "grobid")]
+mod services;
 mod session_picker;
 mod setting_fields;
 mod settings;
@@ -61,6 +63,12 @@ pub use references::{
     CitationAttachment, ReferenceAction, ReferenceCopy, ReferenceEntry, ReferenceOptions,
     ReferenceProgress, ReferenceReport, ReferenceRow, ReferenceSelection, ReferenceSelectionBar,
     ReferenceStage, keys_text, paths_text,
+};
+#[cfg(feature = "grobid")]
+pub use services::{
+    GROBID_DISCOVERY_PORTS, GrobidContainerStatus, GrobidDockerStatus, GrobidProbe,
+    GrobidProbeStatus, GrobidService, GrobidServiceEvent, MANAGED_GROBID_CONTAINER,
+    MANAGED_GROBID_PORT, MANAGED_GROBID_URL, external_services_page, normalize_grobid_url,
 };
 pub use session_picker::{SessionPicker, SessionPickerEvent};
 pub use setting_fields::{

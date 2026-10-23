@@ -21,12 +21,13 @@ pub use crate::{
 
 #[cfg(feature = "ragrig")]
 pub use crate::rag::{
-    AgentInfo, AttachmentSource, Changes, ChatProvider, ExportPrompt, IngestPhase, IngestProgress,
-    LibraryDocument, LibrarySnapshot, MemoryChoice, OpenPrompt, PdfBackend, PendingAttachment,
-    PromptActions, RagChanges, RagChat, RagChatEvent, RagCommand, RagController, RagEvent,
-    RagField, RagReply, RagSection, RagSettings, RagSetup, RequestId, SciscraperAttach,
-    SessionInfo, SessionTurn, SyncSummary, no_changes, rag_model_page, rag_references_group,
-    rag_settings, rag_settings_page,
+    AgentInfo, AttachmentSource, Changes, ChatProvider, DEFAULT_GROBID_IMAGE, DEFAULT_GROBID_URL,
+    ExportPrompt, GrobidSource, IngestPhase, IngestProgress, LibraryDocument, LibrarySnapshot,
+    MemoryChoice, OpenPrompt, PdfBackend, PendingAttachment, PromptActions, RagChanges, RagChat,
+    RagChatEvent, RagCommand, RagController, RagEvent, RagField, RagReply, RagSection, RagSettings,
+    RagSetup, RequestId, SciscraperAttach, SessionInfo, SessionTurn, SyncSummary, no_changes,
+    rag_model_page, rag_reference_processing_group, rag_references_group, rag_settings,
+    rag_settings_page,
 };
 
 #[cfg(feature = "grobid")]
@@ -34,4 +35,11 @@ pub use crate::references::{
     CitationAttachment, ReferenceAction, ReferenceCopy, ReferenceEntry, ReferenceOptions,
     ReferenceProgress, ReferenceReport, ReferenceRow, ReferenceSelection, ReferenceSelectionBar,
     ReferenceStage, keys_text, paths_text,
+};
+
+#[cfg(feature = "grobid")]
+pub use crate::services::{
+    GROBID_DISCOVERY_PORTS, GrobidContainerStatus, GrobidDockerStatus, GrobidProbe,
+    GrobidProbeStatus, GrobidService, GrobidServiceEvent, MANAGED_GROBID_CONTAINER,
+    MANAGED_GROBID_PORT, MANAGED_GROBID_URL, external_services_page, normalize_grobid_url,
 };

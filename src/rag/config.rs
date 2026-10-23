@@ -12,6 +12,12 @@ use ragrig::{
     types::{EmbeddingProvider, Provider},
 };
 
+/// The GROBID URL used when no server URL has been configured.
+pub const DEFAULT_GROBID_URL: &str = "http://localhost:8070";
+
+/// The default managed GROBID image: all CRF and Deep Learning models.
+pub const DEFAULT_GROBID_IMAGE: &str = "grobid/grobid:0.9.1-full";
+
 /// Chat backend offered by the settings page.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ChatProvider {
@@ -114,6 +120,42 @@ impl MemoryChoice {
 
     fn uses_model(self) -> bool {
         matches!(self, Self::Rewrite | Self::Log | Self::Summary)
+    }
+}
+
+/// Where the GROBID server comes from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GrobidSource {
+    /// Use a server that is already running (local or remote).
+    #[default]
+    Existing,
+    /// Let Scico pull and run the official Docker image.
+    Managed,
+}
+
+impl GrobidSource {
+    /// Human-readable name, also used as the persisted value.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Existing => "Existing server",
+            Self::Managed => "Docker container",
+        }
+    }
+
+    /// Options for a dropdown.
+    pub fn options() -> &'static [(Self, &'static str)] {
+        &[
+            (Self::Existing, "Existing server"),
+            (Self::Managed, "Docker container"),
+        ]
+    }
+
+    /// Parse the label stored in a settings file.
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::options()
+            .iter()
+            .find(|(_, option)| *option == label || option.eq_ignore_ascii_case(label))
+            .map(|(source, _)| *source)
     }
 }
 
@@ -265,8 +307,12 @@ pub struct RagSettings {
     pub memory: MemoryChoice,
     /// Small model used for rewriting and summaries.
     pub memory_model: String,
+    /// Where the GROBID server comes from.
+    pub grobid_source: GrobidSource,
     /// Base URL of the GROBID server.
     pub grobid_url: String,
+    /// Docker image used when [`Self::grobid_source`] is [`GrobidSource::Managed`].
+    pub grobid_image: String,
     /// Rename PDFs to their metadata name during reference extraction.
     pub rename_pdfs: bool,
     /// Complete extracted references against OpenAlex.
@@ -340,8 +386,12 @@ pub enum RagField {
     Memory,
     /// Memory model.
     MemoryModel,
-    /// GROBID server.
+    /// Where the GROBID server comes from.
+    GrobidSource,
+    /// GROBID server URL.
     GrobidUrl,
+    /// Docker image for the managed GROBID container.
+    GrobidImage,
     /// Rename processed PDFs.
     RenamePdfs,
     /// OpenAlex completion.
@@ -372,9 +422,8 @@ impl RagField {
                 RagSection::Parsing
             }
             Self::Memory | Self::MemoryModel => RagSection::Memory,
-            Self::GrobidUrl | Self::RenamePdfs | Self::OpenAlex | Self::ResolveCitations => {
-                RagSection::References
-            }
+            Self::GrobidSource | Self::GrobidUrl | Self::GrobidImage => RagSection::Services,
+            Self::RenamePdfs | Self::OpenAlex | Self::ResolveCitations => RagSection::References,
         }
     }
 }
@@ -392,19 +441,22 @@ pub enum RagSection {
     Parsing,
     /// Memory strategy and model.
     Memory,
-    /// GROBID, renaming, OpenAlex, and citations.
+    /// Renaming, OpenAlex, and citations.
     References,
+    /// External services such as the GROBID server.
+    Services,
 }
 
 impl RagSection {
     /// Every section, in page order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Workspace,
         Self::Chat,
         Self::Retrieval,
         Self::Parsing,
         Self::Memory,
         Self::References,
+        Self::Services,
     ];
 
     /// The human-readable section name.
@@ -416,6 +468,7 @@ impl RagSection {
             Self::Parsing => "Parsing and chunking",
             Self::Memory => "Memory",
             Self::References => "References",
+            Self::Services => "External services",
         }
     }
 }
@@ -535,7 +588,15 @@ impl RagSettings {
             self.memory_model != applied.memory_model,
             RagField::MemoryModel,
         );
+        changes.mark_if(
+            self.grobid_source != applied.grobid_source,
+            RagField::GrobidSource,
+        );
         changes.mark_if(self.grobid_url != applied.grobid_url, RagField::GrobidUrl);
+        changes.mark_if(
+            self.grobid_image != applied.grobid_image,
+            RagField::GrobidImage,
+        );
         changes.mark_if(
             self.rename_pdfs != applied.rename_pdfs,
             RagField::RenamePdfs,
@@ -562,9 +623,15 @@ impl RagSettings {
         let workspace = self.workspace.clone();
         let bibliography = self.bibliography.clone();
         let built_in_prompt = self.built_in_prompt.clone();
+        let grobid_source = self.grobid_source;
+        let grobid_url = self.grobid_url.clone();
+        let grobid_image = self.grobid_image.clone();
         let mut defaults = Self {
             workspace,
             bibliography,
+            grobid_source,
+            grobid_url,
+            grobid_image,
             profile_name: self.profile_name.clone(),
             built_in_prompt: built_in_prompt.clone(),
             system_prompt: built_in_prompt,
@@ -643,7 +710,9 @@ impl RagSettings {
             sloppy_pdf: config.parse.sloppy_pdf,
             memory,
             memory_model: config.memory.model.clone(),
-            grobid_url: "http://localhost:8070".to_owned(),
+            grobid_source: GrobidSource::Existing,
+            grobid_url: DEFAULT_GROBID_URL.to_owned(),
+            grobid_image: DEFAULT_GROBID_IMAGE.to_owned(),
             rename_pdfs: false,
             openalex: false,
             resolve_citations: true,
@@ -917,6 +986,9 @@ impl RagSettings {
         if self.grobid_url.trim().is_empty() {
             return Err("enter the GROBID server URL".to_owned());
         }
+        if self.grobid_source == GrobidSource::Managed && self.grobid_image.trim().is_empty() {
+            return Err("enter the Docker image for the managed GROBID container".to_owned());
+        }
         for entry in &self.corpus_dirs {
             let entry = entry.trim();
             if entry.is_empty() {
@@ -1016,11 +1088,17 @@ impl RagSettings {
         config.workspace = workspace.to_path_buf();
         let profiles = self.profiles.clone();
         let built_in_prompt = self.built_in_prompt.clone();
-        // Hybrid retrieval is a runtime choice, not part of a profile, so keep
-        // it across profile switches.
+        // Hybrid retrieval and the service endpoint are runtime choices, not
+        // part of a profile, so keep them across profile switches.
         let hybrid = self.hybrid;
+        let grobid_source = self.grobid_source;
+        let grobid_url = self.grobid_url.clone();
+        let grobid_image = self.grobid_image.clone();
         let mut loaded = Self::from_config(&config);
         loaded.hybrid = hybrid;
+        loaded.grobid_source = grobid_source;
+        loaded.grobid_url = grobid_url;
+        loaded.grobid_image = grobid_image;
         loaded.profiles = profiles;
         loaded.profile_name = name.to_owned();
         loaded.built_in_prompt = built_in_prompt.clone();
@@ -1373,6 +1451,19 @@ mod tests {
     }
 
     #[test]
+    fn grobid_defaults_to_an_existing_server_and_the_full_image() {
+        let settings = RagSettings::default();
+        assert_eq!(settings.grobid_source, GrobidSource::Existing);
+        assert_eq!(settings.grobid_url, DEFAULT_GROBID_URL.to_owned());
+        assert_eq!(settings.grobid_image, DEFAULT_GROBID_IMAGE.to_owned());
+        assert_eq!(
+            GrobidSource::from_label("Docker container"),
+            Some(GrobidSource::Managed)
+        );
+        assert_eq!(GrobidSource::from_label("not a source"), None);
+    }
+
+    #[test]
     fn changes_name_changed_fields_and_their_sections() {
         let applied = fixture();
         let mut settings = applied.clone();
@@ -1459,8 +1550,14 @@ mod tests {
             (RagField::MemoryModel, |settings| {
                 settings.memory_model.push_str("-alt")
             }),
+            (RagField::GrobidSource, |settings| {
+                settings.grobid_source = GrobidSource::Managed
+            }),
             (RagField::GrobidUrl, |settings| {
                 settings.grobid_url.push_str("/v2")
+            }),
+            (RagField::GrobidImage, |settings| {
+                settings.grobid_image.push_str("-crf")
             }),
             (RagField::RenamePdfs, |settings| {
                 settings.rename_pdfs = !settings.rename_pdfs

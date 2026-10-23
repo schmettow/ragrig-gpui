@@ -1,6 +1,6 @@
 [package]
 name = "ragrig-gpui"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -15,17 +15,27 @@ exclude = ["test_library/**"]
 [features]
 default = ["ragrig"]
 ragrig = ["dep:ragrig", "dep:tokio"]
-grobid = ["dep:grobid-bibtex", "dep:biblatex", "ragrig"]
+grobid = [
+    "dep:grobid-bibtex",
+    "dep:biblatex",
+    "dep:bollard",
+    "dep:reqwest",
+    "dep:futures-util",
+    "ragrig",
+]
 
 [dependencies]
 async-channel = "2"
 blake3 = "1.5"
+bollard = { version = "0.21", optional = true }
 comrak = "0.22"
 dirs = "5"
+futures-util = { version = "0.3", optional = true }
 gpui-kit = "0.7.3"
 ragrig = { version = "1.1", optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"], optional = true }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "io-util"], optional = true }
 biblatex = { version = "0.12", optional = true }
 grobid-bibtex = { version = "0.3", features = ["pipeline"], optional = true }
 

@@ -54,6 +54,11 @@ This writes `.ragrig/references.bib` in the workspace and a GROBID manifest in
 the corpus folder. Renaming is off by default; enable it under **Settings →
 References** if you want the PDFs renamed to `Key - Authors - Title - Year`.
 
+With `--features grobid`, **Settings → External services** can discover a
+GROBID server on localhost, test a URL, or pull and run
+`grobid/grobid:0.9.1-full` in Docker. The managed container listens on
+`127.0.0.1:8070` and is stopped when the service entity drops.
+
 `RAGRIG_WORKSPACE` defaults to the current directory. `RAGRIG_CORPUS` indexes
 a folder on startup; `RAGRIG_MODEL` and `RAGRIG_EMBED_MODEL` override the
 settings defaults; `RAGRIG_ASK` submits a first question after the window
@@ -209,7 +214,14 @@ ragrig-gpui
   the Chat/Retrieval/Parsing/Memory groups; pass `Some(PromptActions)` for
   host-owned open/export buttons or `None` for the path field alone.
   `rag_references_group(settings, changes)` can be added to a host's Library
-  page. `path_setting`,
+  page; hosts that show `external_services_page` use
+  `rag_reference_processing_group` instead to avoid a duplicate server URL.
+  `external_services_page(settings, service, changes, cx)` and
+  `GrobidService` own the GROBID discovery and Docker lifecycle. Pull and
+  startup progress can be cancelled; the service stops a container it started
+  when the entity drops. Full images are pulled as `linux/amd64`, so hosts on
+  Apple silicon or `linux/arm64` use emulation; `-crf` images stay native.
+  `path_setting`,
   `token_slider`, `SettingRow`, `dirty_color`, and `dirty_header` are exported
   for hosts that need the same pickers, 2^x token controls, or unsaved marks.
 - `RagSettings::dirty_since(&applied)` returns a `RagChanges` set of

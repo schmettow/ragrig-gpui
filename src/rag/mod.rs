@@ -22,7 +22,8 @@ mod settings_page;
 pub use attach::SciscraperAttach;
 pub use chat::{RagChat, RagChatEvent};
 pub use config::{
-    ChatProvider, MemoryChoice, PdfBackend, RagChanges, RagField, RagSection, RagSettings, RagSetup,
+    ChatProvider, DEFAULT_GROBID_IMAGE, DEFAULT_GROBID_URL, GrobidSource, MemoryChoice, PdfBackend,
+    RagChanges, RagField, RagSection, RagSettings, RagSetup,
 };
 pub use controller::RagController;
 pub use protocol::{
@@ -32,7 +33,7 @@ pub use protocol::{
 };
 pub use settings_page::{
     Changes, ExportPrompt, OpenPrompt, PromptActions, no_changes, rag_model_page,
-    rag_references_group, rag_settings, rag_settings_page,
+    rag_reference_processing_group, rag_references_group, rag_settings, rag_settings_page,
 };
 
 pub(crate) fn count_label(count: usize, singular: &str, plural: &str) -> String {

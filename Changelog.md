@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **External services (GROBID).** New `GrobidService` controller and
+  `external_services_page` settings page. It discovers a running GROBID on
+  localhost (ports 8070 and 8080), probes an entered URL through
+  `/api/isalive`, and can pull and run the official Docker image
+  (`grobid/grobid:0.9.1-full` by default) through `bollard`. The managed
+  container binds `127.0.0.1:8070`, carries `io.ragrig.managed=true`, is
+  stopped when the service entity drops, and reports pull/start progress that
+  can be cancelled. Full images are requested as `linux/amd64`, so Apple
+  silicon and `linux/arm64` hosts use Docker emulation instead of failing the
+  pull; the multi-architecture `-crf` images stay native.
+  `RagSettings` gains `grobid_source` and `grobid_image`; `RagSection::Services`
+  tracks them. `rag_reference_processing_group` is the Library group without a
+  duplicate server URL for hosts that show the new page.
 - **Layered Ragrig configuration.** `RagSettings::from_layers(workspace)`
   merges `~/.ragrig/config.json` and `<workspace>/.ragrig/config.json` per
   setting over the built-in defaults (workspace last). `home_ragrig_dir()`

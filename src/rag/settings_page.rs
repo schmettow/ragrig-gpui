@@ -607,6 +607,10 @@ fn memory_group(
 }
 
 /// The reference-ingestion group for a host's library page.
+///
+/// The GROBID server row belongs to the host's **External services** page;
+/// hosts that show that page can use [`rag_reference_processing_group`] to
+/// avoid a duplicate URL field.
 pub fn rag_references_group(settings: &Entity<RagSettings>, changes: &Changes) -> SettingGroup {
     let grobid_url = text_row(
         settings,
@@ -616,6 +620,51 @@ pub fn rag_references_group(settings: &Entity<RagSettings>, changes: &Changes) -
         |settings, value| settings.grobid_url = value,
     )
     .description("Used when parsing a folder's PDFs into the bibliography.");
+    let (rename_pdfs, openalex, resolve_citations) = reference_processing_rows(settings, changes);
+
+    SettingGroup::new()
+        .title("References")
+        .item(grobid_url.into_item())
+        .item(rename_pdfs.into_item())
+        .item(openalex.into_item())
+        .item(resolve_citations.into_item())
+        .footer(|_, cx| {
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(
+                    "Records merge into the Library bibliography (default .ragrig/references.bib).",
+                )
+        })
+}
+
+/// The reference-processing rows for a host that manages the GROBID server on
+/// its own **External services** page.
+pub fn rag_reference_processing_group(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+) -> SettingGroup {
+    let (rename_pdfs, openalex, resolve_citations) = reference_processing_rows(settings, changes);
+
+    SettingGroup::new()
+        .title("References")
+        .item(rename_pdfs.into_item())
+        .item(openalex.into_item())
+        .item(resolve_citations.into_item())
+        .footer(|_, cx| {
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(
+                    "Records merge into the Library bibliography (default .ragrig/references.bib).",
+                )
+        })
+}
+
+fn reference_processing_rows(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+) -> (SettingRow, SettingRow, SettingRow) {
     let rename_pdfs = switch_row(
         settings,
         changes,
@@ -645,20 +694,7 @@ pub fn rag_references_group(settings: &Entity<RagSettings>, changes: &Changes) -
     )
     .description("Parse @key papers in a question and attach them as context.");
 
-    SettingGroup::new()
-        .title("References")
-        .item(grobid_url.into_item())
-        .item(rename_pdfs.into_item())
-        .item(openalex.into_item())
-        .item(resolve_citations.into_item())
-        .footer(|_, cx| {
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(
-                    "Records merge into the Library bibliography (default .ragrig/references.bib).",
-                )
-        })
+    (rename_pdfs, openalex, resolve_citations)
 }
 
 fn profiles_group(settings: &Entity<RagSettings>, cx: &App) -> SettingGroup {
