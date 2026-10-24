@@ -196,33 +196,25 @@ fn chat_group(
         move |_| provider_options(),
         |settings| settings.provider.label().to_owned(),
         |settings, value| {
-            settings.provider = ChatProvider::options()
-                .iter()
-                .find(|(_, label)| *label == value)
-                .map_or(ChatProvider::Ollama, |(provider, _)| *provider);
+            settings.provider = ChatProvider::from_label(&value).unwrap_or(settings.provider);
         },
     )
-    .description("DeepSeek reads DEEPSEEK_API_KEY from the environment.");
-    let ollama_model = text_row(
+    .description(format!(
+        "Cloud keys: {}. A missing key is reported when the agent starts.",
+        ChatProvider::options()
+            .iter()
+            .filter_map(|(provider, _)| provider.env_var())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    let model = text_row(
         settings,
         changes,
-        spec("rag-ollama-model", RagField::OllamaModel, "Ollama model"),
-        |settings| settings.ollama_model.clone(),
-        |settings, value| settings.ollama_model = value,
+        spec("rag-model", RagField::Model, "Model"),
+        |settings| settings.model().to_owned(),
+        |settings, value| settings.set_model(value),
     )
-    .description("Used when the provider is Ollama.");
-    let deepseek_model = text_row(
-        settings,
-        changes,
-        spec(
-            "rag-deepseek-model",
-            RagField::DeepseekModel,
-            "DeepSeek model",
-        ),
-        |settings| settings.deepseek_model.clone(),
-        |settings, value| settings.deepseek_model = value,
-    )
-    .description("Used when the provider is DeepSeek.");
+    .description("Used by the selected provider; each provider keeps its own model.");
     let stream = switch_row(
         settings,
         changes,
@@ -298,8 +290,7 @@ fn chat_group(
     let mut group = SettingGroup::new()
         .title(group_title("Chat", now.section(RagSection::Chat)))
         .item(provider.into_item())
-        .item(ollama_model.into_item())
-        .item(deepseek_model.into_item())
+        .item(model.into_item())
         .item(stream.into_item())
         .item(temperature.into_item())
         .item(max_tokens.into_item())

@@ -1,7 +1,7 @@
 //! Editable Ragrig configuration for the settings page and profiles.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -19,13 +19,21 @@ pub const DEFAULT_GROBID_URL: &str = "http://localhost:8070";
 pub const DEFAULT_GROBID_IMAGE: &str = "grobid/grobid:0.9.1-full";
 
 /// Chat backend offered by the settings page.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ChatProvider {
     /// Local Ollama server.
     #[default]
     Ollama,
     /// DeepSeek cloud API; the key comes from `DEEPSEEK_API_KEY`.
     DeepSeek,
+    /// OpenAI API; the key comes from `OPENAI_API_KEY`.
+    OpenAi,
+    /// Anthropic Claude API; the key comes from `ANTHROPIC_API_KEY`.
+    Claude,
+    /// Mistral API; the key comes from `MISTRAL_API_KEY`.
+    Mistral,
+    /// OpenRouter API; the key comes from `OPENROUTER_API_KEY`.
+    OpenRouter,
 }
 
 impl ChatProvider {
@@ -34,12 +42,83 @@ impl ChatProvider {
         match self {
             Self::Ollama => "Ollama",
             Self::DeepSeek => "DeepSeek",
+            Self::OpenAi => "OpenAI",
+            Self::Claude => "Claude",
+            Self::Mistral => "Mistral",
+            Self::OpenRouter => "OpenRouter",
+        }
+    }
+
+    /// The environment variable holding this provider's API key.
+    ///
+    /// `None` for the local Ollama server.
+    pub fn env_var(self) -> Option<&'static str> {
+        match self {
+            Self::Ollama => None,
+            Self::DeepSeek => Some("DEEPSEEK_API_KEY"),
+            Self::OpenAi => Some("OPENAI_API_KEY"),
+            Self::Claude => Some("ANTHROPIC_API_KEY"),
+            Self::Mistral => Some("MISTRAL_API_KEY"),
+            Self::OpenRouter => Some("OPENROUTER_API_KEY"),
+        }
+    }
+
+    /// The model used when the settings hold no explicit choice.
+    pub fn default_model(self) -> &'static str {
+        match self {
+            Self::Ollama => "qwen3.5:9b",
+            Self::DeepSeek => "deepseek-v4-pro",
+            Self::OpenAi => "gpt-4o",
+            Self::Claude => "claude-sonnet-4-6",
+            Self::Mistral => "mistral-large-latest",
+            Self::OpenRouter => "openrouter/auto",
         }
     }
 
     /// Options for a dropdown.
     pub fn options() -> &'static [(Self, &'static str)] {
-        &[(Self::Ollama, "Ollama"), (Self::DeepSeek, "DeepSeek")]
+        &[
+            (Self::Ollama, "Ollama"),
+            (Self::DeepSeek, "DeepSeek"),
+            (Self::OpenAi, "OpenAI"),
+            (Self::Claude, "Claude"),
+            (Self::Mistral, "Mistral"),
+            (Self::OpenRouter, "OpenRouter"),
+        ]
+    }
+
+    /// Find the provider with the given dropdown label.
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::options()
+            .iter()
+            .find(|(_, known)| *known == label)
+            .map(|(provider, _)| *provider)
+    }
+}
+
+impl From<ChatProvider> for Provider {
+    fn from(provider: ChatProvider) -> Self {
+        match provider {
+            ChatProvider::Ollama => Self::Ollama,
+            ChatProvider::DeepSeek => Self::Deepseek,
+            ChatProvider::OpenAi => Self::OpenAi,
+            ChatProvider::Claude => Self::Claude,
+            ChatProvider::Mistral => Self::Mistral,
+            ChatProvider::OpenRouter => Self::OpenRouter,
+        }
+    }
+}
+
+impl From<Provider> for ChatProvider {
+    fn from(provider: Provider) -> Self {
+        match provider {
+            Provider::Deepseek => Self::DeepSeek,
+            Provider::OpenAi => Self::OpenAi,
+            Provider::Claude => Self::Claude,
+            Provider::Mistral => Self::Mistral,
+            Provider::OpenRouter => Self::OpenRouter,
+            _ => Self::Ollama,
+        }
     }
 }
 
@@ -252,7 +331,7 @@ impl From<RagrigConfig> for RagSetup {
 /// Editable configuration shown by the settings page.
 ///
 /// This mirrors the Ragrig fields a chat surface exposes. Secrets never enter
-/// this struct: the DeepSeek key is read from the environment by the worker.
+/// this struct: cloud API keys are read from the environment by the worker.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RagSettings {
     /// Workspace folder holding the store and sessions.
@@ -263,10 +342,12 @@ pub struct RagSettings {
     pub bibliography: String,
     /// Active chat backend.
     pub provider: ChatProvider,
-    /// Ollama chat model.
-    pub ollama_model: String,
-    /// DeepSeek chat model.
-    pub deepseek_model: String,
+    /// Chat model per provider.
+    ///
+    /// Every provider keeps its own model, so switching backends does not
+    /// carry a model name into an incompatible API. Missing entries use
+    /// [`ChatProvider::default_model`] when the configuration is built.
+    pub models: BTreeMap<ChatProvider, String>,
     /// Sampling temperature.
     pub temperature: f64,
     /// Maximum generated tokens.
@@ -350,10 +431,8 @@ pub enum RagField {
     Bibliography,
     /// Chat backend.
     Provider,
-    /// Ollama chat model.
-    OllamaModel,
-    /// DeepSeek chat model.
-    DeepseekModel,
+    /// Model of the active chat backend.
+    Model,
     /// Sampling temperature.
     Temperature,
     /// Maximum generated tokens.
@@ -406,8 +485,7 @@ impl RagField {
         match self {
             Self::Workspace | Self::Bibliography => RagSection::Workspace,
             Self::Provider
-            | Self::OllamaModel
-            | Self::DeepseekModel
+            | Self::Model
             | Self::Temperature
             | Self::MaxTokens
             | Self::ContextTokens
@@ -526,6 +604,54 @@ impl RagChanges {
 }
 
 impl RagSettings {
+    /// The model configured for the active provider.
+    ///
+    /// The value is returned as stored, so an edited field can be empty while
+    /// the user types. [`Self::effective_model`] applies the provider default.
+    pub fn model(&self) -> &str {
+        self.model_for(self.provider)
+    }
+
+    /// The model configured for `provider`, as stored.
+    pub fn model_for(&self, provider: ChatProvider) -> &str {
+        self.models
+            .get(&provider)
+            .map(String::as_str)
+            .unwrap_or_default()
+    }
+
+    /// The model configured for the active provider, or its default.
+    pub fn effective_model(&self) -> &str {
+        self.effective_model_for(self.provider)
+    }
+
+    /// The model configured for `provider`, or its default when unset.
+    pub fn effective_model_for(&self, provider: ChatProvider) -> &str {
+        let model = self.model_for(provider).trim();
+        if model.is_empty() {
+            provider.default_model()
+        } else {
+            model
+        }
+    }
+
+    /// Set the model of the active provider.
+    pub fn set_model(&mut self, model: impl Into<String>) {
+        self.set_model_for(self.provider, model);
+    }
+
+    /// Set the model of `provider`.
+    pub fn set_model_for(&mut self, provider: ChatProvider, model: impl Into<String>) {
+        self.models.insert(provider, model.into());
+    }
+
+    fn default_models() -> BTreeMap<ChatProvider, String> {
+        ChatProvider::options()
+            .iter()
+            .map(|(provider, _)| (*provider, provider.default_model().to_owned()))
+            .collect()
+    }
+
     /// Compare the editable configuration fields with the configuration that is
     /// currently running. Profile bookkeeping is ignored.
     pub fn dirty_since(&self, applied: &Self) -> RagChanges {
@@ -536,14 +662,7 @@ impl RagSettings {
             RagField::Bibliography,
         );
         changes.mark_if(self.provider != applied.provider, RagField::Provider);
-        changes.mark_if(
-            self.ollama_model != applied.ollama_model,
-            RagField::OllamaModel,
-        );
-        changes.mark_if(
-            self.deepseek_model != applied.deepseek_model,
-            RagField::DeepseekModel,
-        );
+        changes.mark_if(self.models != applied.models, RagField::Model);
         changes.mark_if(
             self.temperature != applied.temperature,
             RagField::Temperature,
@@ -648,10 +767,29 @@ impl RagSettings {
 impl RagSettings {
     /// Read the editable fields from a Ragrig configuration.
     pub fn from_config(config: &RagrigConfig) -> Self {
-        let provider = match config.chat.provider {
-            Provider::Deepseek => ChatProvider::DeepSeek,
-            _ => ChatProvider::Ollama,
-        };
+        let provider = ChatProvider::from(config.chat.provider.clone());
+        let mut models = Self::default_models();
+        if !config.chat.deepseek_model.trim().is_empty() {
+            models.insert(ChatProvider::DeepSeek, config.chat.deepseek_model.clone());
+        }
+        if !config.chat.model.trim().is_empty() {
+            match provider {
+                // `model` is ignored for DeepSeek; it carries the Ollama
+                // choice so switching back keeps it.
+                ChatProvider::DeepSeek => {
+                    models.insert(ChatProvider::Ollama, config.chat.model.clone());
+                }
+                ChatProvider::Ollama => {
+                    models.insert(ChatProvider::Ollama, config.chat.model.clone());
+                }
+                // Upstream treats the Ollama default as "provider default"
+                // when another backend is selected.
+                _ if config.chat.model == ChatProvider::Ollama.default_model() => {}
+                _ => {
+                    models.insert(provider, config.chat.model.clone());
+                }
+            }
+        }
         let pdf_backend = match config.parse.pdf_parser {
             PdfParserBackend::Unpdf => PdfBackend::Unpdf,
             PdfParserBackend::Sink => PdfBackend::Sink,
@@ -691,8 +829,7 @@ impl RagSettings {
             workspace: config.workspace.to_string_lossy().into_owned(),
             bibliography: String::new(),
             provider,
-            ollama_model: config.chat.model.clone(),
-            deepseek_model: config.chat.deepseek_model.clone(),
+            models,
             temperature: config.chat.params.temperature.unwrap_or(0.2),
             max_tokens: config.chat.params.max_tokens.unwrap_or(2048),
             context_tokens: config.chat.context_tokens,
@@ -805,13 +942,16 @@ impl RagSettings {
         self.validate()?;
 
         let workspace = PathBuf::from(self.workspace.trim());
+        let model = match self.provider {
+            // `model` is ignored for DeepSeek; keep the Ollama choice so a
+            // profile switched back to Ollama retains it.
+            ChatProvider::DeepSeek => self.effective_model_for(ChatProvider::Ollama),
+            _ => self.effective_model(),
+        };
         let chat = ChatConfig {
-            provider: match self.provider {
-                ChatProvider::Ollama => Provider::Ollama,
-                ChatProvider::DeepSeek => Provider::Deepseek,
-            },
-            model: self.ollama_model.trim().to_owned(),
-            deepseek_model: self.deepseek_model.trim().to_owned(),
+            provider: self.provider.into(),
+            model: model.to_owned(),
+            deepseek_model: self.effective_model_for(ChatProvider::DeepSeek).to_owned(),
             // Secrets only ever come from the environment.
             deepseek_api_key: None,
             params: GenerationParams {
@@ -934,24 +1074,12 @@ impl RagSettings {
         if self.workspace.trim().is_empty() {
             return Err("choose a workspace folder".to_owned());
         }
-        match self.provider {
-            ChatProvider::Ollama => {
-                if self.ollama_model.trim().is_empty() {
-                    return Err("choose an Ollama chat model".to_owned());
-                }
-            }
-            ChatProvider::DeepSeek => {
-                if self.deepseek_model.trim().is_empty() {
-                    return Err("choose a DeepSeek chat model".to_owned());
-                }
-                if std::env::var_os("DEEPSEEK_API_KEY").is_none() {
-                    return Err(
-                        "DEEPSEEK_API_KEY is not set; export it before building the agent"
-                            .to_owned(),
-                    );
-                }
-            }
+        if self.model().trim().is_empty() {
+            return Err(format!("choose a {} chat model", self.provider.label()));
         }
+        // API keys are read from the environment when the worker builds the
+        // agent. A missing key must not block editing settings or saving a
+        // profile; the worker reports it through `AgentFailed`.
         if !self.temperature.is_finite() || !(0.0..=2.0).contains(&self.temperature) {
             return Err("temperature must be between 0 and 2".to_owned());
         }
@@ -1207,6 +1335,153 @@ mod tests {
     }
 
     #[test]
+    fn every_provider_has_a_default_model() {
+        let chat = ChatConfig::default();
+        assert_eq!(ChatProvider::Ollama.default_model(), chat.model);
+        assert_eq!(ChatProvider::DeepSeek.default_model(), chat.deepseek_model);
+        for (provider, _) in ChatProvider::options() {
+            assert!(
+                !provider.default_model().trim().is_empty(),
+                "{provider:?} needs a default model"
+            );
+        }
+    }
+
+    #[test]
+    fn cloud_defaults_match_the_upstream_specs() {
+        use ragrig::ChatAgentSpec;
+
+        for (backend, provider) in [
+            ("openai", ChatProvider::OpenAi),
+            ("claude", ChatProvider::Claude),
+            ("mistral", ChatProvider::Mistral),
+            ("openrouter", ChatProvider::OpenRouter),
+        ] {
+            let spec = ChatAgentSpec::parse(backend, None, None, None).expect("known backend");
+            let model = match spec {
+                ChatAgentSpec::OpenAi { model, .. }
+                | ChatAgentSpec::Claude { model, .. }
+                | ChatAgentSpec::Mistral { model, .. }
+                | ChatAgentSpec::OpenRouter { model, .. } => model,
+                _ => panic!("unexpected spec for {backend}"),
+            };
+            assert_eq!(provider.default_model(), model, "{backend} default drifted");
+        }
+    }
+
+    #[test]
+    fn each_provider_keeps_its_own_model() {
+        let mut settings = fixture();
+        settings.set_model_for(ChatProvider::Ollama, "llama3");
+        settings.set_model_for(ChatProvider::OpenAi, "gpt-4o-mini");
+
+        settings.provider = ChatProvider::OpenAi;
+        assert_eq!(settings.model(), "gpt-4o-mini");
+
+        settings.provider = ChatProvider::Claude;
+        assert_eq!(settings.model(), ChatProvider::Claude.default_model());
+
+        settings.provider = ChatProvider::Ollama;
+        assert_eq!(settings.model(), "llama3");
+    }
+
+    #[test]
+    fn cloud_providers_map_to_upstream_backends_and_key_variables() {
+        let providers = [
+            (
+                ChatProvider::DeepSeek,
+                Provider::Deepseek,
+                "DEEPSEEK_API_KEY",
+            ),
+            (ChatProvider::OpenAi, Provider::OpenAi, "OPENAI_API_KEY"),
+            (ChatProvider::Claude, Provider::Claude, "ANTHROPIC_API_KEY"),
+            (ChatProvider::Mistral, Provider::Mistral, "MISTRAL_API_KEY"),
+            (
+                ChatProvider::OpenRouter,
+                Provider::OpenRouter,
+                "OPENROUTER_API_KEY",
+            ),
+        ];
+        for (provider, backend, key) in providers {
+            assert_eq!(Provider::from(provider), backend);
+            assert_eq!(ChatProvider::from(backend), provider);
+            assert_eq!(provider.env_var(), Some(key));
+            assert_eq!(ChatProvider::from_label(provider.label()), Some(provider));
+        }
+        assert_eq!(Provider::from(ChatProvider::Ollama), Provider::Ollama);
+        assert_eq!(ChatProvider::Ollama.env_var(), None);
+    }
+
+    #[test]
+    fn a_missing_api_key_does_not_block_the_settings_form() {
+        let mut settings = fixture();
+        // The worker reports a missing key when it builds the agent. The form
+        // must still validate and convert so Apply and profile saves work.
+        for provider in [
+            ChatProvider::DeepSeek,
+            ChatProvider::OpenAi,
+            ChatProvider::Claude,
+            ChatProvider::Mistral,
+            ChatProvider::OpenRouter,
+        ] {
+            settings.provider = provider;
+            settings.set_model(provider.default_model());
+            assert!(
+                settings.to_config().is_ok(),
+                "{provider:?} must validate without its key"
+            );
+        }
+
+        let workspace = unique_temp_dir("ragrig-gpui-cloud-profile");
+        settings.workspace = workspace.display().to_string();
+        settings.profile_name = "cloud".to_owned();
+        settings
+            .save_profile()
+            .expect("a profile saves without a key in the environment");
+        assert!(workspace.join(".ragrig/profiles/cloud.json").is_file());
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn the_selected_model_reaches_the_chat_config() {
+        let mut settings = fixture();
+        settings.set_model_for(ChatProvider::Ollama, "llama3");
+        let config = settings.to_config().expect("valid configuration");
+        assert_eq!(config.chat.provider, Provider::Ollama);
+        assert_eq!(config.chat.model, "llama3");
+
+        let mut config = RagrigConfig::default();
+        config.chat.provider = Provider::OpenAi;
+        config.chat.model = "gpt-4o-mini".to_owned();
+        let settings = RagSettings::from_config(&config);
+        assert_eq!(settings.provider, ChatProvider::OpenAi);
+        assert_eq!(settings.model(), "gpt-4o-mini");
+        assert_eq!(
+            settings.model_for(ChatProvider::Ollama),
+            ChatProvider::Ollama.default_model(),
+            "inactive providers keep their own default"
+        );
+
+        let mut config = RagrigConfig::default();
+        config.chat.provider = Provider::OpenAi;
+        let settings = RagSettings::from_config(&config);
+        assert_eq!(
+            settings.model(),
+            ChatProvider::OpenAi.default_model(),
+            "the Ollama default means the selected provider's default"
+        );
+
+        let mut config = RagrigConfig::default();
+        config.chat.provider = Provider::Deepseek;
+        config.chat.model = "llama3".to_owned();
+        config.chat.deepseek_model = "deepseek-chat".to_owned();
+        let settings = RagSettings::from_config(&config);
+        assert_eq!(settings.model_for(ChatProvider::Ollama), "llama3");
+        assert_eq!(settings.model_for(ChatProvider::DeepSeek), "deepseek-chat");
+    }
+
+    #[test]
     fn memory_and_retrieval_switches_reach_the_setup() {
         let mut settings = fixture();
         settings.memory = MemoryChoice::Off;
@@ -1250,7 +1525,11 @@ mod tests {
 
         let settings = RagSettings::from_layer_paths(Some(&global), &workspace, None)
             .expect("layered settings");
-        assert_eq!(settings.ollama_model, "local-chat", "workspace wins");
+        assert_eq!(
+            settings.model_for(ChatProvider::Ollama),
+            "local-chat",
+            "workspace wins"
+        );
         assert_eq!(settings.top_k, 12, "global wins over built-in");
         assert_eq!(
             settings.chunk_size, 512,
@@ -1283,7 +1562,7 @@ mod tests {
         base.hybrid = false;
         let settings = RagSettings::from_layer_paths(Some(&global), &workspace, Some(&base))
             .expect("layered settings");
-        assert_eq!(settings.ollama_model, "layer-chat");
+        assert_eq!(settings.model_for(ChatProvider::Ollama), "layer-chat");
         assert_eq!(settings.chunk_size, 256);
         assert_eq!(
             settings.memory,
@@ -1411,7 +1690,7 @@ mod tests {
         let workspace = unique_temp_dir("ragrig-gpui-profile");
         let mut settings = fixture();
         settings.workspace = workspace.display().to_string();
-        settings.ollama_model = "qwen3.5:9b".to_owned();
+        settings.set_model("qwen3.5:9b");
         settings.system_prompt = "Cite primary sources only.".to_owned();
         settings.profile_name = "lab".to_owned();
         settings.status = None;
@@ -1433,7 +1712,7 @@ mod tests {
         settings.profile_name = "lab".to_owned();
         settings.system_prompt = "overwritten".to_owned();
         settings.load_profile("lab").expect("load profile");
-        assert_eq!(settings.ollama_model, "qwen3.5:9b");
+        assert_eq!(settings.model_for(ChatProvider::Ollama), "qwen3.5:9b");
         assert_eq!(settings.system_prompt, "Cite primary sources only.");
 
         settings.profile_name = "../escape".to_owned();
@@ -1502,11 +1781,9 @@ mod tests {
             (RagField::Provider, |settings| {
                 settings.provider = ChatProvider::DeepSeek
             }),
-            (RagField::OllamaModel, |settings| {
-                settings.ollama_model.push_str("-alt")
-            }),
-            (RagField::DeepseekModel, |settings| {
-                settings.deepseek_model.push_str("-alt")
+            (RagField::Model, |settings| {
+                let model = settings.model().to_owned();
+                settings.set_model(format!("{model}-alt"));
             }),
             (RagField::Temperature, |settings| {
                 settings.temperature += 0.1
@@ -1603,15 +1880,15 @@ mod tests {
         let mut settings = fixture();
         settings.workspace = workspace.display().to_string();
         settings.profile_name = "lab".to_owned();
-        settings.ollama_model = "qwen3.5:9b".to_owned();
+        settings.set_model("qwen3.5:9b");
         settings.top_k = 42;
         settings.save_profile().expect("save profile");
 
-        settings.ollama_model = "scratch".to_owned();
+        settings.set_model("scratch");
         settings.top_k = 3;
         settings.reset_to_profile_defaults().expect("reset");
 
-        assert_eq!(settings.ollama_model, "qwen3.5:9b");
+        assert_eq!(settings.model_for(ChatProvider::Ollama), "qwen3.5:9b");
         assert_eq!(settings.top_k, 42);
         assert_eq!(settings.workspace, workspace.display().to_string());
 

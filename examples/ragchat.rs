@@ -12,8 +12,10 @@
 //!
 //! `RAGRIG_WORKSPACE` selects the store/session folder (defaults to the
 //! current directory). `RAGRIG_CORPUS` optionally indexes a folder at
-//! startup. For DeepSeek, export `DEEPSEEK_API_KEY`; for Ollama, start
-//! `ollama serve` and pull the configured chat and embedding models.
+//! startup. For a cloud provider, export its key (`DEEPSEEK_API_KEY`,
+//! `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, or
+//! `OPENROUTER_API_KEY`); for Ollama, start `ollama serve` and pull the
+//! configured chat and embedding models.
 
 use std::path::PathBuf;
 
@@ -59,7 +61,7 @@ impl RagAppState {
         let settings = cx.new(|_| {
             let mut settings = RagSettings::default();
             if let Ok(model) = std::env::var("RAGRIG_MODEL") {
-                settings.ollama_model = model;
+                settings.set_model(model);
             }
             if let Ok(model) = std::env::var("RAGRIG_EMBED_MODEL") {
                 settings.embed_model = model;

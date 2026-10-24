@@ -30,8 +30,10 @@ sudo apt install libxkbcommon-dev libxkbcommon-x11-dev
 - A local [Ollama](https://ollama.com) server with the configured chat and
   embedding models for the full RAG demo. Without it the window still opens;
   requests report the connection error in the status line.
-- Alternatively set `DEEPSEEK_API_KEY` and select DeepSeek in Settings. Keys
-  are read from the environment only and never persisted.
+- Alternatively set `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, or `OPENROUTER_API_KEY` and select
+  the matching provider in Settings. Keys are read from the environment only
+  and never persisted.
 
 Run the demo from this crate's directory:
 
@@ -97,9 +99,12 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
   the partial answer; retry a failed answer with the last prompt.
 - **Sessions** (left dock): new, load, and refresh saved conversations. Apply
   in Settings rebuilds the agent and reloads the current saved session.
-- **Settings** (right dock): workspace, provider, models, generation, prompt,
-  embeddings, retrieval, PDF backend, chunking, memory, and (with `grobid`)
-  GROBID extraction plus the **Use @key citations** switch. The system prompt
+- **Settings** (right dock): workspace, provider and its model, generation,
+  prompt, embeddings, retrieval, PDF backend, chunking, memory, and (with
+  `grobid`) GROBID extraction plus the **Use @key citations** switch. The
+  provider dropdown covers Ollama, DeepSeek, OpenAI, Claude, Mistral, and
+  OpenRouter; the single **Model** row follows the selected provider and
+  remembers each provider's model. The system prompt
   is a Markdown file: an empty path uses the host's compiled-in prompt, and a
   host can add **Open prompt**, **Export**, and **Use built-in** actions with
   `PromptActions`. Workspace, bibliography, and prompt have **Browse…**

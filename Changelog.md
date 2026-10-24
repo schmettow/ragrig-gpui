@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Chat provider selection.** `ChatProvider` now offers Ollama, DeepSeek,
+  OpenAI, Claude, Mistral, and OpenRouter. The Chat group shows a single Model
+  row for the selected provider instead of one row per backend, and each
+  provider keeps its own model in `RagSettings::models`. `model()`,
+  `model_for()`, `effective_model()`, `set_model()`, and `set_model_for()`
+  replace the `ollama_model` / `deepseek_model` fields;
+  `ChatProvider::env_var()` names the environment variable each cloud provider
+  reads (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+  `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`); a missing key is reported by the
+  worker when it builds the agent and never blocks Apply or profile saves.
+  `RagField::OllamaModel` and `RagField::DeepseekModel` are replaced by
+  `RagField::Model`.
 - **External services (GROBID).** New `GrobidService` controller and
   `external_services_page` settings page. It discovers a running GROBID on
   localhost (ports 8070 and 8080), probes an entered URL through
