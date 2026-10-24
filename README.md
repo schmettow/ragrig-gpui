@@ -19,7 +19,7 @@ results.
 
 Requirements:
 
-- Rust 1.88 or newer. Tested with Rust 1.99.
+- Rust 1.97.1 or newer. Tested with Rust 1.99.
 - On Linux, GPUI links `libxkbcommon` and `libxkbcommon-x11`; the runtime
   libraries are not sufficient:
 

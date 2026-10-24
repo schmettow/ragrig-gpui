@@ -1,8 +1,8 @@
 [package]
 name = "ragrig-gpui"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.97.1"
 license = "MIT"
 description = "Reusable GPUI components for Ragrig RAG chat, citations, and reference ingestion"
 readme = "README.md"
@@ -32,7 +32,7 @@ comrak = "0.22"
 dirs = "5"
 futures-util = { version = "0.3", optional = true }
 gpui-kit = "0.7.3"
-ragrig = { path = "../ragrig", version = "1.2", optional = true }
+ragrig = { version = "1.2", optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"], optional = true }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "io-util"], optional = true }

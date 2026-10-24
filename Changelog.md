@@ -5,7 +5,9 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.5.0 — 2026-10-24
+
+Supersedes the unpublished 0.3.0 and 0.4.0 development versions.
 
 ### Changed
 
@@ -191,6 +193,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   label column may shrink (`min_w(0.)`), the switch does not (`flex_none()`),
   and the content no longer adds a second padding on top of the popover shell.
   `toggle_switches_stay_inside_the_popover` checks the rendered switch bounds.
+- The default-feature build no longer warns about the GROBID-only BibTeX
+  location helper. `bibtex_entry_location` and the byte offset it needs are
+  gated on the `grobid` feature, and its test follows the same gate.
+
+### Quality
+
+- `cargo llvm-cov --all-features`: 61.20% regions, 57.55% functions, 58.45%
+  lines (18,457 regions, 1,456 functions, 11,619 lines). Doctests are not
+  measured on stable Rust. The presentation-only modules
+  (`rag/settings_page.rs`, `services/settings_page.rs`, `rag/chat.rs`) account
+  for most of the uncovered remainder; the controller, attachment, protocol,
+  and reference paths are exercised through the headless GPUI tests.
+- `cargo test --all-features`: 156 passed, 0 failed, 4 ignored. The ignored
+  tests need a live GROBID server, a Docker daemon, or measure typing latency.
+- `cargo fmt --check`, `cargo check --all-targets --all-features`,
+  `cargo clippy --all-targets --all-features -- -D warnings`,
+  `cargo doc --no-deps --all-features`, `cargo package --list`, and
+  `cargo publish --dry-run` are green. The package contains 47 files,
+  1,017.3 KiB (236.8 KiB compressed), and verifies against published
+  `ragrig` 1.2.0.
+- The declared MSRV is 1.97.1, the effective requirement of the default
+  feature set (`ragrig` 1.2). The previous 1.88 claim did not account for
+  that dependency.
 
 ## v0.2.0 — 2026-10-17
 

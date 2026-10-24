@@ -7,6 +7,7 @@
 /// One `@type{key` header found in a bibliography.
 struct EntryHeader {
     /// Byte offset of the `@`.
+    #[cfg(feature = "grobid")]
     byte_offset: usize,
     /// The same offset counted in chars.
     char_offset: usize,
@@ -34,6 +35,7 @@ pub fn bibtex_entry_offset(text: &str, key: &str) -> Option<usize> {
 /// the first entry (for example in a broken preamble).
 ///
 /// `byte_offset` clamps to the end of `text`.
+#[cfg(feature = "grobid")]
 #[must_use]
 pub(crate) fn bibtex_entry_location(text: &str, byte_offset: usize) -> (usize, Option<String>) {
     let offset = byte_offset.min(text.len());
@@ -84,6 +86,7 @@ fn entry_headers(text: &str) -> Vec<EntryHeader> {
             })
             .collect();
         headers.push(EntryHeader {
+            #[cfg(feature = "grobid")]
             byte_offset: at,
             char_offset: text[..at].chars().count(),
             key,
@@ -132,6 +135,7 @@ mod tests {
         assert_eq!(bibtex_entry_offset(text, "Kano2025"), Some(2));
     }
 
+    #[cfg(feature = "grobid")]
     #[test]
     fn locations_name_the_line_and_the_entry() {
         let text =
