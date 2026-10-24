@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`SidePanel::toolbar`.** A fixed row between the header and the scrollable
+  body keeps pane-level controls visible above long lists. The Scico workspace
+  uses it for **New workspace**, **Open workspace**, and the project summary.
 - **Chat provider selection.** `ChatProvider` now offers Ollama, DeepSeek,
   OpenAI, Claude, Mistral, and OpenRouter. The Chat group shows a single Model
   row for the selected provider instead of one row per backend, and each

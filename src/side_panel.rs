@@ -20,6 +20,7 @@ pub struct SidePanel {
     title: SharedString,
     subtitle: Option<SharedString>,
     actions: Vec<AnyElement>,
+    toolbar: Option<AnyElement>,
     children: Vec<AnyElement>,
     footer: Option<AnyElement>,
 }
@@ -35,6 +36,7 @@ impl SidePanel {
             title: title.into(),
             subtitle: None,
             actions: Vec::new(),
+            toolbar: None,
             children: Vec::new(),
             footer: None,
         }
@@ -49,6 +51,15 @@ impl SidePanel {
     /// Add an action to the header's trailing edge.
     pub fn action(mut self, action: impl IntoElement) -> Self {
         self.actions.push(action.into_any_element());
+        self
+    }
+
+    /// Add a fixed toolbar between the header and the scrollable body.
+    ///
+    /// Unlike [`Self::child`], the toolbar does not scroll with the body, so
+    /// pane-level controls stay reachable above a long list.
+    pub fn toolbar(mut self, toolbar: impl IntoElement) -> Self {
+        self.toolbar = Some(toolbar.into_any_element());
         self
     }
 
@@ -111,6 +122,16 @@ impl RenderOnce for SidePanel {
             .size_full()
             .bg(theme.background)
             .child(header)
+            .when_some(self.toolbar, |panel, toolbar| {
+                panel.child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(theme.border)
+                        .child(toolbar),
+                )
+            })
             .child(body)
             .when_some(self.footer, |panel, footer| {
                 panel.child(
