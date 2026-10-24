@@ -19,7 +19,7 @@ mod controller;
 mod protocol;
 mod settings_page;
 
-pub use attach::SciscraperAttach;
+pub use attach::ScicoAttach;
 pub use chat::{RagChat, RagChatEvent};
 pub use config::{
     ChatProvider, DEFAULT_GROBID_IMAGE, DEFAULT_GROBID_URL, GrobidSource, MemoryChoice, PdfBackend,

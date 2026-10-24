@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+
+- **Scico rebrand.** The host application is now **Scico**. The app-specific
+  attach strategy is `ScicoAttach`, and the editor roundtrip protocol is
+  namespaced `scico:v1` (`<scico:v1:context>`, `<scico:v1:document>`,
+  `<scico:v1:selection>`, `<scico:v1:library>`, `<scico:v1:truncated>`,
+  and `scico:v1:replace`). The assistant is called **Chat**; its prompt is the
+  chat prompt and its project prompt file is `Chat.md`. This is a breaking
+  protocol change: prompts and hosts must use the new namespace.
+
 ### Added
 
 - **Chat provider selection.** `ChatProvider` now offers Ollama, DeepSeek,
@@ -43,8 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Project data directory.** `RagSetup::data_dir` selects where the vector
   store, sessions, and profiles live (default `<workspace>/.ragrig`). The
   store therefore opens at `<data_dir>/.ragrig_store` instead of the workspace
-  root, which keeps a Sciscraper project to the layout described in its
-  `.sciscraper` descriptor.
+  root, which keeps a Scico project to the layout described in its
+  `.scico` descriptor.
 - **Switchable status-bar components.** `AgentComponent` now carries
   `ComponentToggle` switches, rendered in its popover. `AgentBarEvent::Toggle`
   reports `{component, toggle, enabled}` to the host. `ComponentKind::Memory`
@@ -93,7 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `editor::Roundtrip` builds the document
   and selection containers and routes replacements. The protocol
   (`RoundtripContext`, `Replacement`, `verified_bytes`, `replace_at`) moved here
-  from `sciscraper-gpui`, so the editor backend is now swappable.
+  from `scico`, so the editor backend is now swappable.
 - **Reference editing in the roundtrip.** `EditorSurface::reveal` places the
   caret at a character offset and scrolls it into view. `RoundtripHost` gains
   `bibliography()` and `open_at(path, offset)`, and its default
@@ -171,7 +181,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   control committed every keystroke and rewrote the field, so the trailing dot
   became out-of-range and flipped to `1`. `a_decimal_commits_on_enter_not_per_keystroke`
   and `an_out_of_range_decimal_warns_and_restores` cover the widget.
-- A monochrome Scico mark keeps transparent gaps between its rings; the
+- A monochrome Chat mark keeps transparent gaps between its rings; the
   previous concentric filled discs would have collapsed into a solid dot under
   GPUI's alpha-mask painting.
 - Agent-bar component popovers keep their switches inside the content box. The
@@ -206,10 +216,10 @@ bump is tied to M3 (deeper library management), which is still open.
   attached as one-shot context (3 papers, 100,000 characters each). The
   transcript shows an `Attached: @Key` note and any misses above the answer.
   The switch lives under Settings → References and is on by default.
-- **Context formatting**: `SciscraperAttach` emits the co-writer prompt's
-  `<sciscraper:v1:context source="creator">` / `source="corpus"` containers,
+- **Context formatting**: `ScicoAttach` emits the co-writer prompt's
+  `<scico:v1:context source="creator">` / `source="corpus"` containers,
   budgets explicit attachments at 70% of the configured context window, and
-  marks shortened papers with `<sciscraper:v1:truncated .../>`.
+  marks shortened papers with `<scico:v1:truncated .../>`.
 - **Reference multi-select**: `ReferenceSelection` keyed by citation key, a
   hover-revealed **+** on each row, and `ReferenceSelectionBar` with bulk
   **Copy @keys**, **Copy paths**, **Attach to next question**, and **Clear**.

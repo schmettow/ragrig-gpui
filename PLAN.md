@@ -20,7 +20,7 @@ Date: 2026-10-17.
   traits (`Progress`, `Cancel`, `CancellationToken`).
 - `ragrig-gpui` contains the M0 spike, the M1 primitive library and widget
   gallery, and the plan below. The crate names `ragrig-gpui` and
-  `sciscraper-gpui` are free on crates.io.
+  `scico` are free on crates.io.
 
 ## 2. What changed in the GPUI ecosystem
 
@@ -98,7 +98,7 @@ gpui-kit 0.7.3 (gpui-pre + gpui-base + gpui-component + assets)
   chips, agent bar, section panel, source list rows, settings rows.
 - Pure `ChatState::apply(ChatEvent)` and `LibraryState::apply(IndexEvent)`
   reducers carry the streaming/indexing semantics, so tests do not need a
-  window and sciscraper can reuse the logic with its own view.
+  window and Scico can reuse the logic with its own view.
 - `ChatView` is the batteries-included projection; `MessageBubble` is the
   escape hatch for hosts that own their transcript.
 
@@ -152,7 +152,7 @@ Entity<RagController>               Tokio runtime (multi-thread)
   `Sources`/`Settings` sheet, bottom `AgentBar`/status.
 - Use `h_resizable` / `ResizablePanelGroup`; a thin `SidePanel` widget owns
   section headers and a horizontal collapse strip, not the resizing logic.
-- Use the full `dock::DockArea` only when sciscraper-gpui needs tabs and
+- Use the full `dock::DockArea` only when Scico needs tabs and
   nested splits. Porting the egui dock's drag internals would be reinvention.
 - Settings use `Sheet` + `SettingPage` / `SettingGroup` / `SettingItem`.
   Appearance applies immediately; pipeline changes use an explicit Apply.
@@ -170,7 +170,7 @@ composer implemented by hand:
 - `insert()`, `replace_all()`, `set_selected_range()`, `focus()` for
   programmatic insertion;
 - `InlineToken` spans for atomic `@Key` citations, with click/hover
-  callbacks — a direct fit for sciscraper's reference attach.
+  callbacks — a direct fit for Scico's reference attach.
 
 `Composer::append_text` inserts at the caret (or at the end, configurable)
 and keeps focus. `Composer::append_citation` can use an inline token later.
@@ -438,7 +438,7 @@ Delivered at the user's request before M3. The version stays at 0.2.0;
   Tokio's blocking pool before generation, so no PDF parsing touches GPUI.
 - `RagEvent::Citations` carries the attached keys and miss lines. `RagChat`
   inserts a system note *before* the assistant placeholder, giving the
-  Sciscraper order: question, `Attached: @Key`, then the streaming answer.
+  Scico order: question, `Attached: @Key`, then the streaming answer.
 - `RagSettings::resolve_citations` (default **on**) is exposed as **Use @key
   citations** in Settings → References and threaded through `RagSetup`.
 - **Prompt context fix.** `RagAgent::builder().system_prompt` trusts the caller
@@ -446,14 +446,14 @@ Delivered at the user's request before M3. The version stays at 0.2.0;
   controller now applies prompts through the latter, so a plain prompt no
   longer silently drops retrieval and attachments. A regression test asserts
   that a prompt without the placeholder still receives an attached paper.
-- **Sciscraper context containers.** `SciscraperAttach` replaces the generic
+- **Scico context containers.** `ScicoAttach` replaces the generic
   `[Attached: …]` format with the co-writer prompt's
-  `<sciscraper:v1:context source="creator">` / `source="corpus"`
+  `<scico:v1:context source="creator">` / `source="corpus"`
   containers, so an attached `@Key` paper is visibly a document, not a
   retrieval miss.
 - **Context budget.** The strategy receives the configured `context_tokens`,
   gives 70% of the block to explicit attachments and the rest to retrieval,
-  and adds `<sciscraper:v1:truncated shown="…" total="…"/>` to shortened
+  and adds `<scico:v1:truncated shown="…" total="…"/>` to shortened
   papers. Without this, a 36k-char cited PDF plus 9k chars of retrieval
   overflowed a 4096-token model and Ollama dropped the attachment.
 - A folder parsed with GROBID joins the citation corpora even when it was not
@@ -507,7 +507,7 @@ containers.
 | D5 | **Hybrid state**: entities for chat/composer/pickers/library/settings; plain builders for rows, chips, and the agent bar; pure reducers. |
 | D6 | **Controller in the library**; no slash-command parser. |
 | D7 | **Dedicated Tokio runtime thread**; one actor owns `AgentSession`; bounded events; batched tokens; `CancellationToken`. |
-| D8 | **`DockArea`** for the demo because Sciscraper will use tabs. |
+| D8 | **`DockArea`** for the demo because Scico will use tabs. |
 | D9 | **Secrets from the environment only** (`DEEPSEEK_API_KEY`); never persisted. |
 | D10 | **M4 is GROBID/BibTeX only**; arXiv and Semantic Scholar are deprecated. GROBID logic comes from `grobid-bibtex`. |
 | D11 | **M5 is Roundtrip Experience** — `@key` prompt attachment and reference multi-select. Hardening/publication moved to M6. |

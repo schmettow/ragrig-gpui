@@ -53,7 +53,7 @@ impl Default for EmptyState {
 /// How the assistant signs its messages.
 #[derive(Clone, Debug)]
 pub struct ChatIdentity {
-    /// Name next to the assistant's mark, e.g. `Scico`.
+    /// Name next to the assistant's mark, e.g. `Chat`.
     pub name: SharedString,
     /// Mark shown before the name.
     pub icon: ChatIcon,
@@ -300,7 +300,7 @@ impl ChatView {
     /// Replace a message's body and re-render it as stable Markdown.
     ///
     /// The host uses this when it lifts host-specific markup (e.g. a
-    /// Sciscraper replacement block) out of a finished answer before the
+    /// Scico replacement block) out of a finished answer before the
     /// author reads it. Returns whether the message existed.
     pub fn set_message_text(
         &mut self,

@@ -3,7 +3,7 @@
 //! `ragrig-gpui` packages the chat, composer, transcript, attachment, session,
 //! agent-status and settings surfaces needed to build a RAG front end. The
 //! crate contains no editor widget: it exports the editor roundtrip contract
-//! ([`editor`]) so hosting applications such as Sciscraper can plug in their
+//! ([`editor`]) so hosting applications such as Scico can plug in their
 //! own editor component.
 //!
 //! # State model

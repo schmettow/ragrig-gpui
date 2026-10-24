@@ -25,7 +25,7 @@ pub use crate::rag::{
     ExportPrompt, GrobidSource, IngestPhase, IngestProgress, LibraryDocument, LibrarySnapshot,
     MemoryChoice, OpenPrompt, PdfBackend, PendingAttachment, PromptActions, RagChanges, RagChat,
     RagChatEvent, RagCommand, RagController, RagEvent, RagField, RagReply, RagSection, RagSettings,
-    RagSetup, RequestId, SciscraperAttach, SessionInfo, SessionTurn, SyncSummary, no_changes,
+    RagSetup, RequestId, ScicoAttach, SessionInfo, SessionTurn, SyncSummary, no_changes,
     rag_model_page, rag_reference_processing_group, rag_references_group, rag_settings,
     rag_settings_page,
 };

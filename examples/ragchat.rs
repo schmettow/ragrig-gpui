@@ -1,7 +1,7 @@
 //! Ragrig GPUI demo: a configurable chat with library, sessions, references,
 //! `@key` citations, and reference multi-select.
 //!
-//! This is the RAG half of Sciscraper without the editor. It uses the
+//! This is the RAG half of Scico without the editor. It uses the
 //! reusable `ragrig-gpui` components and talks to a real Ragrig agent.
 //!
 //! ```text

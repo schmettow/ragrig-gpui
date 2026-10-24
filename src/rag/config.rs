@@ -1577,16 +1577,16 @@ mod tests {
     #[test]
     fn a_prompt_file_overrides_the_inline_prompt() {
         let workspace = unique_temp_dir("ragrig-gpui-prompt-file");
-        std::fs::write(workspace.join("Scico.md"), "# Scico\n\nUse the corpus.")
+        std::fs::write(workspace.join("Chat.md"), "# Chat\n\nUse the corpus.")
             .expect("prompt file");
         let mut settings = fixture();
         settings.workspace = workspace.display().to_string();
         settings.system_prompt = "inline".to_owned();
-        settings.system_prompt_path = "Scico.md".to_owned();
+        settings.system_prompt_path = "Chat.md".to_owned();
 
         assert_eq!(
             settings.to_setup().expect("setup").system_prompt.as_deref(),
-            Some("# Scico\n\nUse the corpus.")
+            Some("# Chat\n\nUse the corpus.")
         );
         let applied = RagSettings {
             system_prompt_path: String::new(),
@@ -1605,7 +1605,7 @@ mod tests {
     #[test]
     fn a_missing_prompt_file_is_reported() {
         let mut settings = fixture();
-        settings.system_prompt_path = "/definitely/not/here/Scico.md".to_owned();
+        settings.system_prompt_path = "/definitely/not/here/Chat.md".to_owned();
         let error = settings.to_setup().expect_err("missing prompt");
         assert!(error.contains("cannot read system prompt"), "{error}");
     }
@@ -1615,7 +1615,7 @@ mod tests {
         let mut settings = fixture();
         settings.built_in_prompt = "Host prompt".to_owned();
         settings.system_prompt = "File prompt".to_owned();
-        settings.system_prompt_path = "Scico.md".to_owned();
+        settings.system_prompt_path = "Chat.md".to_owned();
 
         settings.use_built_in_prompt();
 
@@ -1898,8 +1898,8 @@ mod tests {
     #[test]
     fn profile_defaults_without_a_profile_keep_the_library_location() {
         let mut settings = fixture();
-        settings.workspace = "/tmp/sciscraper-workspace".to_owned();
-        settings.bibliography = "/tmp/sciscraper.bib".to_owned();
+        settings.workspace = "/tmp/scico-workspace".to_owned();
+        settings.bibliography = "/tmp/scico.bib".to_owned();
         settings.profile_name.clear();
         settings.top_k = 3;
         settings.temperature = 1.7;
@@ -1909,8 +1909,8 @@ mod tests {
         let defaults = RagSettings::default();
         assert_eq!(settings.top_k, defaults.top_k);
         assert_eq!(settings.temperature, defaults.temperature);
-        assert_eq!(settings.workspace, "/tmp/sciscraper-workspace");
-        assert_eq!(settings.bibliography, "/tmp/sciscraper.bib");
+        assert_eq!(settings.workspace, "/tmp/scico-workspace");
+        assert_eq!(settings.bibliography, "/tmp/scico.bib");
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {

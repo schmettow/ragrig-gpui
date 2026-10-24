@@ -4,7 +4,7 @@ Reusable [GPUI](https://gpui.rs) components for Ragrig: a streaming RAG chat,
 a Markdown transcript, source chips, attachment context, session picking, agent
 status, a full settings page, and a dedicated Tokio controller. The crate has
 no editor widget; it exports the editor roundtrip contract (`editor::EditorSurface`,
-`editor::RoundtripHost`, and `editor::Roundtrip`) so Sciscraper and other hosts
+`editor::RoundtripHost`, and `editor::Roundtrip`) so Scico and other hosts
 can plug in their own editor while keeping the same context containers and
 guarded write-back.
 
@@ -170,7 +170,7 @@ ragrig-gpui
 - `ChatView` keeps its own branding neutral: `ChatIdentity` (name plus
   `ChatIcon`) signs assistant rows, and `ChatIcon` accepts a catalog name, an
   asset path, or inline SVG bytes. `EmptyState` takes the same mark. This lets
-  a host such as Sciscraper show its own assistant name and logo without
+  a host such as Scico show its own assistant name and logo without
   shipping assets in this crate.
 
 - `RagController::new(RagSetup, cx)` starts one worker thread per controller.
@@ -199,10 +199,10 @@ ragrig-gpui
   `{context}` when a prompt does not contain it. Without that placeholder,
   Ragrig has nowhere to substitute retrieved chunks or attached papers, so the
   model never sees either.
-- `SciscraperAttach` formats context with the Scico prompt's
-  `<sciscraper:v1:context source="creator">` and `source="corpus"`
+- `ScicoAttach` formats context with the chat prompt's
+  `<scico:v1:context source="creator">` and `source="corpus"`
   containers. Attached `@Key` papers therefore arrive as
-  `<sciscraper:v1:document name="@Key">…</sciscraper:v1:document>`, not as
+  `<scico:v1:document name="@Key">…</scico:v1:document>`, not as
   generic `[Attached: …]` blocks. Host-built containers (the document buffer,
   the bibliography, a marked selection) pass through verbatim instead of being
   wrapped a second time, so their `cursor`, `range`, and `digest` attributes
@@ -212,7 +212,7 @@ ragrig-gpui
 - The same strategy budgets the context block for `context_tokens`: explicit
   attachments receive 70% of the window and retrieval the rest, so a 36k-char
   paper cannot push itself out of a 4096-token model. Shortened papers carry a
-  `<sciscraper:v1:truncated shown="…" total="…"/>` marker, which the Scico
+  `<scico:v1:truncated shown="…" total="…"/>` marker, which the chat
   prompt already understands.
 - `rag_settings(id, settings, controller, cx)` builds the complete page;
   Apply is explicit. `rag_model_page(settings, changes, prompt, cx)` exposes
@@ -297,7 +297,7 @@ the link error in CI.
   the selected corpus. Rename and OpenAlex completion are opt-in because both
   change files or call the network.
 - `@key` resolution is capped at 3 papers per question and 100,000 characters
-  per paper, mirroring Sciscraper. Citing the same file through two aliases
+  per paper, mirroring Scico. Citing the same file through two aliases
   counts both keys as resolved but attaches the document once. Misses never
   abort the question; they appear in the transcript note.
 - `ReferenceSelection` is keyed by citation key, so a refreshed list keeps the

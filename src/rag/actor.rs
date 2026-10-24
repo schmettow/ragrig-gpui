@@ -42,7 +42,7 @@ use grobid_bibtex::cite::CiteState;
 
 use super::{
     AgentInfo, AttachmentSource, IngestPhase, IngestProgress, LibraryDocument, LibrarySnapshot,
-    PendingAttachment, RagCommand, RagEvent, RagReply, RagSetup, RequestId, SciscraperAttach,
+    PendingAttachment, RagCommand, RagEvent, RagReply, RagSetup, RequestId, ScicoAttach,
     SessionInfo, SessionTurn, SyncSummary,
 };
 
@@ -1136,7 +1136,7 @@ async fn build_session(setup: &RagSetup) -> Result<AgentSession, String> {
         .store(vector_store)
         .parsers(parsers)
         .chunk_config(chunk_config)
-        .attach_strategy(Box::new(SciscraperAttach::with_context_tokens(
+        .attach_strategy(Box::new(ScicoAttach::with_context_tokens(
             config.chat.context_tokens,
         )))
         .context_tokens(config.chat.context_tokens)
@@ -1375,7 +1375,7 @@ mod tests {
             .store(store)
             .chunk_config(ChunkConfig::new(64, 8).expect("chunk config"))
             .attach_strategy(
-                Box::new(SciscraperAttach::with_context_tokens(4096)) as Box<dyn AttachStrategy>
+                Box::new(ScicoAttach::with_context_tokens(4096)) as Box<dyn AttachStrategy>
             )
             .build()
             .expect("build agent");
@@ -1772,9 +1772,9 @@ mod tests {
         let prompts = prompts.lock().expect("prompts");
         assert_eq!(prompts.len(), 1);
         assert!(prompts[0].contains("Answer tersely."));
-        assert!(prompts[0].contains("<sciscraper:v1:context source=\"creator\">"));
+        assert!(prompts[0].contains("<scico:v1:context source=\"creator\">"));
         assert!(prompts[0].contains(
-            "<sciscraper:v1:document name=\"@Kano2025\">ATTACHED PAPER BODY</sciscraper:v1:document>"
+            "<scico:v1:document name=\"@Kano2025\">ATTACHED PAPER BODY</scico:v1:document>"
         ));
 
         let _ = std::fs::remove_dir_all(workspace);
@@ -1862,11 +1862,13 @@ mod tests {
 
         let prompts = prompts.lock().expect("prompts");
         assert_eq!(prompts.len(), 1);
+        assert!(
+            prompts[0].contains(
+                "<scico:v1:document name=\"@Kano2025\">KANO PAPER BODY</scico:v1:document>"
+            )
+        );
         assert!(prompts[0].contains(
-            "<sciscraper:v1:document name=\"@Kano2025\">KANO PAPER BODY</sciscraper:v1:document>"
-        ));
-        assert!(prompts[0].contains(
-            "<sciscraper:v1:document name=\"@Kobayashi2011\">KOBAYASHI PAPER BODY</sciscraper:v1:document>"
+            "<scico:v1:document name=\"@Kobayashi2011\">KOBAYASHI PAPER BODY</scico:v1:document>"
         ));
 
         commands.close();

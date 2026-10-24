@@ -1,16 +1,16 @@
-//! Context formatting for the Scico prompt.
+//! Context formatting for the chat prompt.
 //!
-//! Ragrig's built-in strategies emit plain `[Attached: …]` blocks. Sciscraper's
+//! Ragrig's built-in strategies emit plain `[Attached: …]` blocks. The chat
 //! prompt instead documents two marked containers — `source="creator"` for
 //! papers the author attached and `source="corpus"` for retrieval results.
-//! [`SciscraperAttach`] produces exactly that markup, so the model can tell an
+//! [`ScicoAttach`] produces exactly that markup, so the model can tell an
 //! explicitly attached `@Key` paper from a retrieved chunk.
 //!
 //! A paper easily exceeds a local model's window: the default 4096-token
 //! context leaves about 9,000 characters for the whole context block, while a
-//! cited PDF can carry 100,000. [`SciscraperAttach::with_context_tokens`]
+//! cited PDF can carry 100,000. [`ScicoAttach::with_context_tokens`]
 //! therefore splits that budget in favour of explicit attachments and marks
-//! every excerpt with the prompt's `<sciscraper:v1:truncated …/>` element.
+//! every excerpt with the prompt's `<scico:v1:truncated …/>` element.
 
 use ragrig::{AttachStrategy, AttachedDocument};
 
@@ -21,16 +21,16 @@ const CHARS_PER_TOKEN: usize = 3;
 /// Percentage of the context block reserved for explicit attachments.
 const ATTACHMENT_PERCENT: usize = 70;
 
-/// Merge attachments and retrieved chunks into Sciscraper's context containers.
+/// Merge attachments and retrieved chunks into Scico's context containers.
 ///
 /// ```text
-/// <sciscraper:v1:context source="creator">
-/// <sciscraper:v1:document name="@Kano2025">…full text…</sciscraper:v1:document>
-/// </sciscraper:v1:context>
+/// <scico:v1:context source="creator">
+/// <scico:v1:document name="@Kano2025">…full text…</scico:v1:document>
+/// </scico:v1:context>
 ///
-/// <sciscraper:v1:context source="corpus">
+/// <scico:v1:context source="corpus">
 /// …retrieved passages…
-/// </sciscraper:v1:context>
+/// </scico:v1:context>
 /// ```
 ///
 /// Without a budget the content passes through unchanged. With
@@ -38,11 +38,11 @@ const ATTACHMENT_PERCENT: usize = 70;
 /// receive most of the context window and every shortened paper carries a
 /// truncation marker.
 #[derive(Clone, Debug, Default)]
-pub struct SciscraperAttach {
+pub struct ScicoAttach {
     context_tokens: Option<usize>,
 }
 
-impl SciscraperAttach {
+impl ScicoAttach {
     /// Format without a character budget.
     pub fn new() -> Self {
         Self::default()
@@ -81,11 +81,11 @@ impl SciscraperAttach {
     }
 }
 
-impl AttachStrategy for SciscraperAttach {
+impl AttachStrategy for ScicoAttach {
     fn merge(&self, retrieved: &str, attachments: &[AttachedDocument]) -> String {
         let mut context = String::new();
         if !attachments.is_empty() {
-            context.push_str("<sciscraper:v1:context source=\"creator\">\n");
+            context.push_str("<scico:v1:context source=\"creator\">\n");
             let mut remaining = self.attachment_budget();
             let share = remaining / attachments.len();
             for (index, attachment) in attachments.iter().enumerate() {
@@ -110,18 +110,18 @@ impl AttachStrategy for SciscraperAttach {
                 let (content, truncated) = truncate(&attachment.content, limit);
                 remaining = remaining.saturating_sub(content.chars().count());
                 context.push_str(&format!(
-                    "<sciscraper:v1:document name=\"{}\">{content}",
+                    "<scico:v1:document name=\"{}\">{content}",
                     attribute(&attachment.name)
                 ));
                 if truncated {
                     context.push_str(&format!(
-                        "<sciscraper:v1:truncated shown=\"{}\" total=\"{total}\"/>",
+                        "<scico:v1:truncated shown=\"{}\" total=\"{total}\"/>",
                         content.chars().count()
                     ));
                 }
-                context.push_str("</sciscraper:v1:document>\n");
+                context.push_str("</scico:v1:document>\n");
             }
-            context.push_str("</sciscraper:v1:context>");
+            context.push_str("</scico:v1:context>");
         }
 
         let retrieved = retrieved.trim_end_matches('\n');
@@ -130,25 +130,25 @@ impl AttachStrategy for SciscraperAttach {
             if !context.is_empty() {
                 context.push_str("\n\n");
             }
-            context.push_str("<sciscraper:v1:context source=\"corpus\">\n");
+            context.push_str("<scico:v1:context source=\"corpus\">\n");
             context.push_str(&retrieved);
-            context.push_str("\n</sciscraper:v1:context>");
+            context.push_str("\n</scico:v1:context>");
         }
         context
     }
 
     fn name(&self) -> &'static str {
-        "sciscraper"
+        "scico"
     }
 }
 
 /// Whether `text` already is one of the protocol's containers.
 ///
-/// Hosts build richer containers than [`SciscraperAttach`] itself does — the
+/// Hosts build richer containers than [`ScicoAttach`] itself does — the
 /// document buffer adds `cursor`, a selection adds `range` and `digest` — and
 /// hand them in as attachment content. Those must pass through untouched.
 fn is_container(text: &str) -> bool {
-    text.trim_start().starts_with("<sciscraper:v1")
+    text.trim_start().starts_with("<scico:v1")
 }
 
 /// Return `text` shortened to at most `max` characters, and whether it was cut.
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn attachments_and_retrieval_use_the_documented_containers() {
-        let merged = SciscraperAttach::new().merge(
+        let merged = ScicoAttach::new().merge(
             "[doc: Kano2025]\nretrieved passage",
             &[
                 document("@Kano2025", "PAPER BODY"),
@@ -191,35 +191,35 @@ mod tests {
 
         assert_eq!(
             merged,
-            "<sciscraper:v1:context source=\"creator\">\n\
-             <sciscraper:v1:document name=\"@Kano2025\">PAPER BODY</sciscraper:v1:document>\n\
-             <sciscraper:v1:document name=\"@Kobayashi2011\">OTHER BODY</sciscraper:v1:document>\n\
-             </sciscraper:v1:context>\n\n\
-             <sciscraper:v1:context source=\"corpus\">\n\
+            "<scico:v1:context source=\"creator\">\n\
+             <scico:v1:document name=\"@Kano2025\">PAPER BODY</scico:v1:document>\n\
+             <scico:v1:document name=\"@Kobayashi2011\">OTHER BODY</scico:v1:document>\n\
+             </scico:v1:context>\n\n\
+             <scico:v1:context source=\"corpus\">\n\
              [doc: Kano2025]\nretrieved passage\n\
-             </sciscraper:v1:context>"
+             </scico:v1:context>"
         );
     }
 
     #[test]
     fn empty_parts_do_not_leave_empty_containers() {
-        assert_eq!(SciscraperAttach::new().merge("", &[]), "");
+        assert_eq!(ScicoAttach::new().merge("", &[]), "");
         assert_eq!(
-            SciscraperAttach::new().merge("chunks", &[]),
-            "<sciscraper:v1:context source=\"corpus\">\nchunks\n</sciscraper:v1:context>"
+            ScicoAttach::new().merge("chunks", &[]),
+            "<scico:v1:context source=\"corpus\">\nchunks\n</scico:v1:context>"
         );
         assert_eq!(
-            SciscraperAttach::new().merge("", &[document("@Key", "BODY")]),
-            "<sciscraper:v1:context source=\"creator\">\n\
-             <sciscraper:v1:document name=\"@Key\">BODY</sciscraper:v1:document>\n\
-             </sciscraper:v1:context>"
+            ScicoAttach::new().merge("", &[document("@Key", "BODY")]),
+            "<scico:v1:context source=\"creator\">\n\
+             <scico:v1:document name=\"@Key\">BODY</scico:v1:document>\n\
+             </scico:v1:context>"
         );
     }
 
     #[test]
     fn prebuilt_containers_pass_through_verbatim() {
-        let selection = "<sciscraper:v1:selection name=\"draft.md\" range=\"2..8\" chars=\"6\" digest=\"b3:abc\">\nmarked\n</sciscraper:v1:selection>";
-        let merged = SciscraperAttach::new().merge(
+        let selection = "<scico:v1:selection name=\"draft.md\" range=\"2..8\" chars=\"6\" digest=\"b3:abc\">\nmarked\n</scico:v1:selection>";
+        let merged = ScicoAttach::new().merge(
             "",
             &[document("ignored", selection), document("@Key", "PAPER")],
         );
@@ -229,36 +229,35 @@ mod tests {
             "the richer container is kept: {merged}"
         );
         assert!(
-            !merged.contains("<sciscraper:v1:document name=\"ignored\">"),
+            !merged.contains("<scico:v1:document name=\"ignored\">"),
             "a container is not wrapped twice: {merged}"
         );
-        assert!(
-            merged.contains("<sciscraper:v1:document name=\"@Key\">PAPER</sciscraper:v1:document>")
-        );
+        assert!(merged.contains("<scico:v1:document name=\"@Key\">PAPER</scico:v1:document>"));
     }
 
     #[test]
     fn attribute_values_are_escaped() {
-        let merged = SciscraperAttach::new().merge("", &[document("a\"<&", "BODY")]);
+        let merged = ScicoAttach::new().merge("", &[document("a\"<&", "BODY")]);
         assert!(merged.contains("name=\"a&quot;&lt;&amp;\""));
     }
 
     #[test]
     fn a_token_budget_keeps_the_whole_context_within_the_window() {
         // 1,024 reserved + 100 context tokens at three characters each.
-        let merged = SciscraperAttach::with_context_tokens(1124)
+        let merged = ScicoAttach::with_context_tokens(1124)
             .merge(&"r".repeat(1_000), &[document("@Key", &"a".repeat(1_000))]);
 
         // 70% of the 300-character budget goes to the paper, the rest to retrieval.
-        assert!(merged.contains(
-            "<sciscraper:v1:truncated shown=\"210\" total=\"1000\"/></sciscraper:v1:document>"
-        ));
+        assert!(
+            merged
+                .contains("<scico:v1:truncated shown=\"210\" total=\"1000\"/></scico:v1:document>")
+        );
         assert!(merged.contains(&format!("source=\"corpus\">\n{}\n", "r".repeat(90))));
         let body = merged
             .split_once("name=\"@Key\">")
             .expect("document body")
             .1
-            .split_once("<sciscraper:v1:truncated")
+            .split_once("<scico:v1:truncated")
             .expect("truncation marker")
             .0;
         assert_eq!(body.chars().count(), 210);
@@ -266,10 +265,10 @@ mod tests {
 
     #[test]
     fn short_papers_do_not_get_a_marker_and_leave_room_for_retrieval() {
-        let merged = SciscraperAttach::with_context_tokens(1124)
+        let merged = ScicoAttach::with_context_tokens(1124)
             .merge(&"r".repeat(1_000), &[document("@Key", "SHORT")]);
-        assert!(!merged.contains("<sciscraper:v1:truncated"));
-        assert!(merged.contains(">SHORT</sciscraper:v1:document>"));
+        assert!(!merged.contains("<scico:v1:truncated"));
+        assert!(merged.contains(">SHORT</scico:v1:document>"));
         // The unused attachment share does not starve retrieval.
         assert!(merged.contains(&"r".repeat(90)));
     }

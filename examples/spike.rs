@@ -1,6 +1,6 @@
 //! M0 foundation spike for `ragrig-gpui`.
 //!
-//! Proves the pieces Sciscraper's RAG surface depends on:
+//! Proves the pieces Scico's RAG surface depends on:
 //!
 //! - a `DockArea` with center, left, and right panels;
 //! - live Markdown in a tail-following `MessageScroller`;

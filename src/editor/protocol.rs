@@ -1,41 +1,41 @@
 //! The editor-agnostic container protocol of the roundtrip.
 //!
 //! Everything the agent is shown from the editor is wrapped in a versioned,
-//! self-describing container, so the Scico prompt can tell the author's
+//! self-describing container, so the chat prompt can tell the author's
 //! own text apart from retrieved literature:
 //!
 //! ```text
-//! <sciscraper:v1:context source="creator">
-//! <sciscraper:v1:document name="paper.md" path="docs/paper.md" cursor="42:7" chars="12345">
+//! <scico:v1:context source="creator">
+//! <scico:v1:document name="paper.md" path="docs/paper.md" cursor="42:7" chars="12345">
 //! …source…
-//! </sciscraper:v1:document>
-//! <sciscraper:v1:selection name="paper.md" range="120..480" chars="360" digest="b3:…">
+//! </scico:v1:document>
+//! <scico:v1:selection name="paper.md" range="120..480" chars="360" digest="b3:…">
 //! …the marked passage…
-//! </sciscraper:v1:selection>
-//! </sciscraper:v1:context>
+//! </scico:v1:selection>
+//! </scico:v1:context>
 //! ```
 //!
 //! The result half is [`Replacement::extract`]: the agent answers with a
-//! fenced `sciscraper:v1:replace` block, the host lifts it out of the chat and
+//! fenced `scico:v1:replace` block, the host lifts it out of the chat and
 //! writes it back only when [`digest`] still matches the marked passage.
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 /// Protocol version prefix shared by every marker.
-pub const PROTOCOL: &str = "sciscraper:v1";
+pub const PROTOCOL: &str = "scico:v1";
 /// Container for one block of context.
-pub const MARKER_CONTEXT: &str = "sciscraper:v1:context";
+pub const MARKER_CONTEXT: &str = "scico:v1:context";
 /// Container for one document inside a context block.
-pub const MARKER_DOCUMENT: &str = "sciscraper:v1:document";
+pub const MARKER_DOCUMENT: &str = "scico:v1:document";
 /// Container for the author's bibliography.
-pub const MARKER_LIBRARY: &str = "sciscraper:v1:library";
+pub const MARKER_LIBRARY: &str = "scico:v1:library";
 /// Container for a passage the author marked for a question.
-pub const MARKER_SELECTION: &str = "sciscraper:v1:selection";
+pub const MARKER_SELECTION: &str = "scico:v1:selection";
 /// Marks where a truncated context was cut.
-pub const MARKER_TRUNCATED: &str = "sciscraper:v1:truncated";
+pub const MARKER_TRUNCATED: &str = "scico:v1:truncated";
 /// Info string of the result-side replacement block.
-pub const MARKER_REPLACE: &str = "sciscraper:v1:replace";
+pub const MARKER_REPLACE: &str = "scico:v1:replace";
 
 /// One attached context carries at most this many characters.
 pub const MAX_CONTEXT_CHARS: usize = 100_000;
@@ -272,7 +272,7 @@ impl RoundtripContext {
 
     /// A pending attachment whose content is this container.
     ///
-    /// The worker's `SciscraperAttach` passes pre-built containers through, so
+    /// The worker's `ScicoAttach` passes pre-built containers through, so
     /// the attributes survive unchanged.
     #[must_use]
     pub fn attachment_label(&self) -> String {
@@ -557,13 +557,13 @@ mod tests {
             .expect("non-empty document");
         let container = context.container();
 
-        assert!(container.starts_with("<sciscraper:v1:document"));
+        assert!(container.starts_with("<scico:v1:document"));
         assert!(container.contains("name=\"draft.md\""));
         assert!(container.contains("path=\"/tmp/draft.md\""));
         assert!(container.contains("cursor=\"2:3\""));
         assert!(container.contains("chars=\"11\""));
         assert!(!container.contains("digest="));
-        assert!(container.ends_with("</sciscraper:v1:document>"));
+        assert!(container.ends_with("</scico:v1:document>"));
     }
 
     #[test]
@@ -592,7 +592,7 @@ mod tests {
         let context = RoundtripContext::library(Path::new("/tmp/library.bib"), "@article{A}")
             .expect("library");
         let container = context.container();
-        assert!(container.starts_with("<sciscraper:v1:library"));
+        assert!(container.starts_with("<scico:v1:library"));
         assert!(!container.contains("cursor="));
         assert!(container.contains("name=\"library.bib\""));
     }
@@ -650,7 +650,8 @@ mod tests {
 
     #[test]
     fn a_replacement_block_is_lifted_out_of_the_answer() {
-        let answer = "Here is the shorter version.\n\n```sciscraper:v1:replace target=\"4..9\"\nnew text\n```\n";
+        let answer =
+            "Here is the shorter version.\n\n```scico:v1:replace target=\"4..9\"\nnew text\n```\n";
         let (prose, blocks) = Replacement::extract(answer).expect("a replacement block");
         assert_eq!(prose, "Here is the shorter version.");
         assert_eq!(blocks.len(), 1);
@@ -660,7 +661,7 @@ mod tests {
 
     #[test]
     fn a_block_before_the_prose_is_lifted_too() {
-        let answer = "```sciscraper:v1:replace\nbody\n```\n\nProse follows.";
+        let answer = "```scico:v1:replace\nbody\n```\n\nProse follows.";
         let (prose, blocks) = Replacement::extract(answer).expect("a replacement block");
         assert_eq!(prose, "Prose follows.");
         assert_eq!(blocks[0].body, "body");
@@ -681,15 +682,15 @@ mod tests {
     #[test]
     fn an_empty_block_is_still_lifted() {
         let (prose, blocks) =
-            Replacement::extract("Prose.\n\n```sciscraper:v1:replace\n```").expect("block");
+            Replacement::extract("Prose.\n\n```scico:v1:replace\n```").expect("block");
         assert_eq!(prose, "Prose.");
         assert_eq!(blocks[0].body, "");
     }
 
     #[test]
     fn several_blocks_come_back_in_order() {
-        let answer = "```sciscraper:v1:replace target=\"0..1\"\none\n```\n\
-                      ```sciscraper:v1:replace target=\"1..2\"\ntwo\n```";
+        let answer = "```scico:v1:replace target=\"0..1\"\none\n```\n\
+                      ```scico:v1:replace target=\"1..2\"\ntwo\n```";
         let (_, blocks) = Replacement::extract(answer).expect("blocks");
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].body, "one");
@@ -699,8 +700,7 @@ mod tests {
     #[test]
     fn a_garbled_target_is_not_a_target() {
         let (_, blocks) =
-            Replacement::extract("```sciscraper:v1:replace target=\"x..y\"\nbody\n```")
-                .expect("block");
+            Replacement::extract("```scico:v1:replace target=\"x..y\"\nbody\n```").expect("block");
         assert_eq!(blocks[0].target, None);
     }
 
