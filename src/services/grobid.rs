@@ -310,6 +310,12 @@ impl GrobidService {
                 let _ = commands.try_send(GrobidCommand::Probe {
                     url: initial.grobid_url,
                 });
+            } else if initial.grobid_auto_start && !initial.grobid_image.trim().is_empty() {
+                // `Inspect` runs first and reports the container state; this
+                // starts a stopped container or pulls the image when needed.
+                let _ = commands.try_send(GrobidCommand::PullAndStart {
+                    image: initial.grobid_image,
+                });
             }
 
             Some(worker)

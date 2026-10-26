@@ -20,7 +20,7 @@ use gpui_kit::{
 use crate::{
     SettingRow, control, dirty_header, dropdown_control,
     rag::{Changes, GrobidSource, RagField, RagSettings},
-    text_control,
+    switch_control, text_control,
 };
 
 use super::{GrobidContainerStatus, GrobidDockerStatus, GrobidProbeStatus, GrobidService};
@@ -232,6 +232,23 @@ fn managed_group(
     service: &Entity<GrobidService>,
     changes: &Changes,
 ) -> SettingGroup {
+    let settings_for_auto = settings.clone();
+    let writer = settings.clone();
+    let auto_start = switch_control(
+        "grobid-auto-start",
+        move |cx| settings_for_auto.read(cx).grobid_auto_start,
+        move |value, cx| {
+            writer.update(cx, |settings, cx| {
+                settings.grobid_auto_start = value;
+                cx.notify();
+            });
+        },
+    );
+    let changes_for_auto = changes.clone();
+    let auto_start_row = SettingRow::new("Auto start", auto_start)
+        .description("Start the managed GROBID container when the app opens.")
+        .dirty(move |cx| changes_for_auto(cx).contains(RagField::GrobidAutoStart));
+
     let settings_for_image = settings.clone();
     let writer = settings.clone();
     let image = text_control(
@@ -380,6 +397,7 @@ fn managed_group(
 
     SettingGroup::new()
         .title("Managed container")
+        .item(auto_start_row.into_item())
         .item(image_row.into_item())
         .item(actions)
         .item(status)

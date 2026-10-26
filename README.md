@@ -58,7 +58,8 @@ References** if you want the PDFs renamed to `Key - Authors - Title - Year`.
 
 With `--features grobid`, **Settings → External services** can discover a
 GROBID server on localhost, test a URL, or pull and run
-`grobid/grobid:0.9.1-full` in Docker. The managed container listens on
+`grobid/grobid:0.9.1-full` in Docker. **Auto start** starts the managed
+container whenever the service is created. The managed container listens on
 `127.0.0.1:8070` and is stopped when the service entity drops.
 
 `RAGRIG_WORKSPACE` defaults to the current directory. `RAGRIG_CORPUS` indexes

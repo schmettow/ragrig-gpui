@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- **Managed GROBID auto start.** `RagSettings::grobid_auto_start` and the new
+  `RagField::GrobidAutoStart` back an **Auto start** switch on the managed
+  container page. When the flag is on and the source is
+  `GrobidSource::Managed`, `GrobidService::new` starts the container (pulling
+  the image when necessary) as the service is created. The field is preserved
+  across profile loads and reset-to-defaults like the other service choices.
+
 ## v0.5.0 — 2026-10-24
 
 Supersedes the unpublished 0.3.0 and 0.4.0 development versions.

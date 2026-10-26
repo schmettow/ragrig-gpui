@@ -394,6 +394,8 @@ pub struct RagSettings {
     pub grobid_url: String,
     /// Docker image used when [`Self::grobid_source`] is [`GrobidSource::Managed`].
     pub grobid_image: String,
+    /// Start the managed GROBID container when the app opens.
+    pub grobid_auto_start: bool,
     /// Rename PDFs to their metadata name during reference extraction.
     pub rename_pdfs: bool,
     /// Complete extracted references against OpenAlex.
@@ -471,6 +473,8 @@ pub enum RagField {
     GrobidUrl,
     /// Docker image for the managed GROBID container.
     GrobidImage,
+    /// Start the managed GROBID container when the app opens.
+    GrobidAutoStart,
     /// Rename processed PDFs.
     RenamePdfs,
     /// OpenAlex completion.
@@ -500,7 +504,9 @@ impl RagField {
                 RagSection::Parsing
             }
             Self::Memory | Self::MemoryModel => RagSection::Memory,
-            Self::GrobidSource | Self::GrobidUrl | Self::GrobidImage => RagSection::Services,
+            Self::GrobidSource | Self::GrobidUrl | Self::GrobidImage | Self::GrobidAutoStart => {
+                RagSection::Services
+            }
             Self::RenamePdfs | Self::OpenAlex | Self::ResolveCitations => RagSection::References,
         }
     }
@@ -717,6 +723,10 @@ impl RagSettings {
             RagField::GrobidImage,
         );
         changes.mark_if(
+            self.grobid_auto_start != applied.grobid_auto_start,
+            RagField::GrobidAutoStart,
+        );
+        changes.mark_if(
             self.rename_pdfs != applied.rename_pdfs,
             RagField::RenamePdfs,
         );
@@ -745,12 +755,14 @@ impl RagSettings {
         let grobid_source = self.grobid_source;
         let grobid_url = self.grobid_url.clone();
         let grobid_image = self.grobid_image.clone();
+        let grobid_auto_start = self.grobid_auto_start;
         let mut defaults = Self {
             workspace,
             bibliography,
             grobid_source,
             grobid_url,
             grobid_image,
+            grobid_auto_start,
             profile_name: self.profile_name.clone(),
             built_in_prompt: built_in_prompt.clone(),
             system_prompt: built_in_prompt,
@@ -850,6 +862,7 @@ impl RagSettings {
             grobid_source: GrobidSource::Existing,
             grobid_url: DEFAULT_GROBID_URL.to_owned(),
             grobid_image: DEFAULT_GROBID_IMAGE.to_owned(),
+            grobid_auto_start: false,
             rename_pdfs: false,
             openalex: false,
             resolve_citations: true,
@@ -1222,11 +1235,13 @@ impl RagSettings {
         let grobid_source = self.grobid_source;
         let grobid_url = self.grobid_url.clone();
         let grobid_image = self.grobid_image.clone();
+        let grobid_auto_start = self.grobid_auto_start;
         let mut loaded = Self::from_config(&config);
         loaded.hybrid = hybrid;
         loaded.grobid_source = grobid_source;
         loaded.grobid_url = grobid_url;
         loaded.grobid_image = grobid_image;
+        loaded.grobid_auto_start = grobid_auto_start;
         loaded.profiles = profiles;
         loaded.profile_name = name.to_owned();
         loaded.built_in_prompt = built_in_prompt.clone();
@@ -1735,6 +1750,7 @@ mod tests {
         assert_eq!(settings.grobid_source, GrobidSource::Existing);
         assert_eq!(settings.grobid_url, DEFAULT_GROBID_URL.to_owned());
         assert_eq!(settings.grobid_image, DEFAULT_GROBID_IMAGE.to_owned());
+        assert!(!settings.grobid_auto_start);
         assert_eq!(
             GrobidSource::from_label("Docker container"),
             Some(GrobidSource::Managed)
@@ -1835,6 +1851,9 @@ mod tests {
             }),
             (RagField::GrobidImage, |settings| {
                 settings.grobid_image.push_str("-crf")
+            }),
+            (RagField::GrobidAutoStart, |settings| {
+                settings.grobid_auto_start = !settings.grobid_auto_start
             }),
             (RagField::RenamePdfs, |settings| {
                 settings.rename_pdfs = !settings.rename_pdfs
