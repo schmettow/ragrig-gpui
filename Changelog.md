@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.5.1 — 2026-10-27
 
 ### Added
 
@@ -15,6 +15,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GrobidSource::Managed`, `GrobidService::new` starts the container (pulling
   the image when necessary) as the service is created. The field is preserved
   across profile loads and reset-to-defaults like the other service choices.
+
+### Quality
+
+Release validation on 2026-10-27 (Cargo 1.99.0, rustc 1.99.0).
+
+**Test coverage.** `cargo llvm-cov --all-features --summary-only` (doctests are
+not measured on stable Rust):
+
+| Metric | Covered | Total | Cover |
+| --- | ---: | ---: | ---: |
+| Regions | 11,312 | 18,511 | 61.11% |
+| Functions | 839 | 1,461 | 57.43% |
+| Lines | 6,805 | 11,654 | 58.39% |
+
+The least covered areas are the Docker/GROBID service (`src/services/grobid.rs`
+21.30%), the controller (`src/rag/controller.rs` 13.99%), and the settings/UI
+wiring (`src/rag/settings_page.rs` and `src/services/settings_page.rs`, 0%).
+The Docker-dependent tests are marked `#[ignore]`; the UI pages are exercised
+through the host application.
+
+**Tests.** `cargo test --all-features`: 147 unit tests (3 ignored), 2 gallery
+tests, 5 spike tests (1 ignored), and 2 doctests — **156 passed, 0 failed, 4
+ignored**. The ignored tests are the three Docker-dependent GROBID tests and
+the typing-latency measurement.
+
+**Checks.** `cargo fmt --check`, `cargo check --all-targets --all-features`,
+`cargo clippy --all-targets --all-features -- -D warnings`,
+`cargo doc --no-deps --all-features`, and `cargo package --list` are green.
+`cargo publish --dry-run` packaged 46 files (994.0 KiB, 226.3 KiB compressed)
+and verified successfully.
 
 ## v0.5.0 — 2026-10-24
 

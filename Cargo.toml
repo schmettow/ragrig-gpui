@@ -1,6 +1,6 @@
 [package]
 name = "ragrig-gpui"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -10,7 +10,7 @@ repository = "https://github.com/schmettow/ragrig-gpui"
 homepage = "https://github.com/schmettow/ragrig-gpui"
 keywords = ["gpui", "rag", "ui", "chat", "llm"]
 categories = ["gui", "text-processing"]
-exclude = ["test_library/**"]
+exclude = ["test_library/**", "PLAN.md"]
 
 [features]
 default = ["ragrig"]
