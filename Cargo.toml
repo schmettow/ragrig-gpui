@@ -45,6 +45,10 @@ async-trait = "0.1"
 gpui-kit = { version = "0.7.3", features = ["test-support"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
 
+[patch.crates-io]
+# grobid-bibtex = { path = "../grobid-bibtex" }
+ragrig = { path = "../ragrig" }
+
 [[example]]
 name = "spike"
 test = true
