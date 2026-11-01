@@ -5,7 +5,9 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.6.0 — 2026-11-01
+## v0.6.1 — 2026-11-01
+
+0.6.1 is the first published release in the 0.6 line.
 
 ### Added
 
@@ -23,6 +25,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   development) for `Provider::LlamaCpp` and the new `ChatConfig` fields.
   `ChatProvider` gained a variant, so downstream exhaustive matches need a
   wildcard arm — hence the minor version bump.
+
+### Quality
+
+Release validation on 2026-11-01 (Cargo 1.99.0, rustc 1.99.0).
+
+**Test coverage.** `cargo llvm-cov --all-features --summary-only` (doctests are
+not measured on stable Rust):
+
+| Metric | Covered | Total | Cover |
+| --- | ---: | ---: | ---: |
+| Regions | 11,396 | 18,614 | 61.22% |
+| Functions | 843 | 1,467 | 57.46% |
+| Lines | 6,860 | 11,721 | 58.53% |
+
+The least covered areas are the Docker/GROBID service
+(`src/services/grobid.rs` 18.96% lines), the worker controller
+(`src/rag/controller.rs` 12.30%), the headless UI surfaces
+(`src/rag/settings_page.rs`, `src/services/settings_page.rs`, and
+`src/rag/chat.rs`, 0%), `src/session_picker.rs` (39.74%), and
+`src/setting_fields.rs` (40.08%).  The Docker-dependent tests are marked
+`#[ignore]`; the settings and host pages are exercised through the example
+applications.
+
+**Tests.** `cargo test --all-features`: 150 unit tests (3 ignored), 2 gallery
+tests, 5 spike tests (1 ignored), and 2 doctests — **159 passed, 0 failed, 4
+ignored**.
+
+**Checks.** `cargo fmt --check`, `cargo check --all-targets --all-features`,
+`cargo test --all-features`,
+`cargo clippy --all-targets --all-features -- -D warnings`, and
+`cargo doc --no-deps --all-features` are green.  `cargo package --list` lists
+46 files and excludes `test_library/`.  `cargo publish --dry-run` packages the
+crate but cannot verify it yet: it requires `ragrig = "^1.3"`, and 1.3.0 is
+not on crates.io.  This is the expected publication-order blocker; re-run the
+dry run after publishing ragrig 1.3.0.
 
 ## v0.5.1 — 2026-10-27
 

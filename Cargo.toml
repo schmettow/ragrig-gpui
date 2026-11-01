@@ -45,9 +45,9 @@ async-trait = "0.1"
 gpui-kit = { version = "0.7.3", features = ["test-support"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
 
-[patch.crates-io]
+# Development against the sibling checkout.  The `path` in the dependency is
+# stripped when the crate is published.
 # grobid-bibtex = { path = "../grobid-bibtex" }
-ragrig = { path = "../ragrig" }
 
 [[example]]
 name = "spike"
