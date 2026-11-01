@@ -200,12 +200,23 @@ fn chat_group(
         },
     )
     .description(format!(
-        "Cloud keys: {}. A missing key is reported when the agent starts.",
+        "API keys: {}. A missing key is reported when the agent starts; llama.cpp only needs one for a secured server.",
         ChatProvider::options()
             .iter()
             .filter_map(|(provider, _)| provider.env_var())
             .collect::<Vec<_>>()
             .join(", ")
+    ));
+    let llamacpp_url = text_row(
+        settings,
+        changes,
+        spec("rag-llamacpp-url", RagField::LlamaCppUrl, "llama.cpp URL"),
+        |settings| settings.llamacpp_url.clone(),
+        |settings, value| settings.llamacpp_url = value,
+    )
+    .description(format!(
+        "Base URL of a local llama-server, including /v1 (default {}). Used when Provider is llama.cpp.",
+        ragrig::agents::DEFAULT_LLAMACPP_BASE_URL
     ));
     let model = text_row(
         settings,
@@ -290,6 +301,7 @@ fn chat_group(
     let mut group = SettingGroup::new()
         .title(group_title("Chat", now.section(RagSection::Chat)))
         .item(provider.into_item())
+        .item(llamacpp_url.into_item())
         .item(model.into_item())
         .item(stream.into_item())
         .item(temperature.into_item())

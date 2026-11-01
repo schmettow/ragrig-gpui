@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.6.0 — 2026-11-01
+
+### Added
+
+- **llama.cpp chat provider.** `ChatProvider::LlamaCpp` selects a locally
+  running `llama-server` through ragrig's new OpenAI-compatible connector.  The
+  Chat group gains an editable **llama.cpp URL** row (`RagSettings::llamacpp_url`,
+  `RagField::LlamaCppUrl`) defaulting to `http://localhost:8080/v1`; the value
+  is saved in profiles and restored when switching back to the provider.  A
+  blank URL fails validation with an actionable message.  `LLAMACPP_API_KEY`
+  is only needed for a server started with `--api-key`.
+
+### Changed
+
+- **ragrig 1.3.** The crate now depends on ragrig 1.3 (path `../ragrig` during
+  development) for `Provider::LlamaCpp` and the new `ChatConfig` fields.
+  `ChatProvider` gained a variant, so downstream exhaustive matches need a
+  wildcard arm — hence the minor version bump.
+
 ## v0.5.1 — 2026-10-27
 
 ### Added

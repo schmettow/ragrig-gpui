@@ -30,7 +30,12 @@ sudo apt install libxkbcommon-dev libxkbcommon-x11-dev
 - A local [Ollama](https://ollama.com) server with the configured chat and
   embedding models for the full RAG demo. Without it the window still opens;
   requests report the connection error in the status line.
-- Alternatively set `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`,
+- Alternatively run a local [llama.cpp](https://github.com/ggml-org/llama.cpp)
+  server (`llama-server -m model.gguf --port 8080`) and select **llama.cpp** in
+  Settings; set its URL there (default `http://localhost:8080/v1`) or point
+  `LLAMACPP_API_BASE_URL` at it.  A server started with `--api-key` reads the
+  key from `LLAMACPP_API_KEY`.
+- Or set `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`,
   `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, or `OPENROUTER_API_KEY` and select
   the matching provider in Settings. Keys are read from the environment only
   and never persisted.
@@ -103,9 +108,10 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
 - **Settings** (right dock): workspace, provider and its model, generation,
   prompt, embeddings, retrieval, PDF backend, chunking, memory, and (with
   `grobid`) GROBID extraction plus the **Use @key citations** switch. The
-  provider dropdown covers Ollama, DeepSeek, OpenAI, Claude, Mistral, and
-  OpenRouter; the single **Model** row follows the selected provider and
-  remembers each provider's model. The system prompt
+  provider dropdown covers Ollama, llama.cpp, DeepSeek, OpenAI, Claude,
+  Mistral, and OpenRouter; the single **Model** row follows the selected
+  provider and remembers each provider's model, and the **llama.cpp URL** row
+  points the local connector at its `llama-server`. The system prompt
   is a Markdown file: an empty path uses the host's compiled-in prompt, and a
   host can add **Open prompt**, **Export**, and **Use built-in** actions with
   `PromptActions`. Workspace, bibliography, and prompt have **Browse…**

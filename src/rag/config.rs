@@ -9,6 +9,7 @@ use std::{
 use ragrig::{
     ChatConfig, EmbedConfig, GenerationParams, MemoryConfig, MemoryStrategyKind, ParseConfig,
     PdfParserBackend, RagrigConfig,
+    agents::{DEFAULT_LLAMACPP_MODEL, resolve_llamacpp_base_url},
     types::{EmbeddingProvider, Provider},
 };
 
@@ -24,6 +25,8 @@ pub enum ChatProvider {
     /// Local Ollama server.
     #[default]
     Ollama,
+    /// Local llama.cpp `llama-server`; optional key from `LLAMACPP_API_KEY`.
+    LlamaCpp,
     /// DeepSeek cloud API; the key comes from `DEEPSEEK_API_KEY`.
     DeepSeek,
     /// OpenAI API; the key comes from `OPENAI_API_KEY`.
@@ -41,6 +44,7 @@ impl ChatProvider {
     pub fn label(self) -> &'static str {
         match self {
             Self::Ollama => "Ollama",
+            Self::LlamaCpp => "llama.cpp",
             Self::DeepSeek => "DeepSeek",
             Self::OpenAi => "OpenAI",
             Self::Claude => "Claude",
@@ -51,10 +55,12 @@ impl ChatProvider {
 
     /// The environment variable holding this provider's API key.
     ///
-    /// `None` for the local Ollama server.
+    /// `None` for the local Ollama server.  `llama.cpp` authenticates
+    /// optionally, so its variable is only needed for a secured server.
     pub fn env_var(self) -> Option<&'static str> {
         match self {
             Self::Ollama => None,
+            Self::LlamaCpp => Some("LLAMACPP_API_KEY"),
             Self::DeepSeek => Some("DEEPSEEK_API_KEY"),
             Self::OpenAi => Some("OPENAI_API_KEY"),
             Self::Claude => Some("ANTHROPIC_API_KEY"),
@@ -67,6 +73,7 @@ impl ChatProvider {
     pub fn default_model(self) -> &'static str {
         match self {
             Self::Ollama => "qwen3.5:9b",
+            Self::LlamaCpp => DEFAULT_LLAMACPP_MODEL,
             Self::DeepSeek => "deepseek-v4-pro",
             Self::OpenAi => "gpt-4o",
             Self::Claude => "claude-sonnet-4-6",
@@ -79,6 +86,7 @@ impl ChatProvider {
     pub fn options() -> &'static [(Self, &'static str)] {
         &[
             (Self::Ollama, "Ollama"),
+            (Self::LlamaCpp, "llama.cpp"),
             (Self::DeepSeek, "DeepSeek"),
             (Self::OpenAi, "OpenAI"),
             (Self::Claude, "Claude"),
@@ -100,6 +108,7 @@ impl From<ChatProvider> for Provider {
     fn from(provider: ChatProvider) -> Self {
         match provider {
             ChatProvider::Ollama => Self::Ollama,
+            ChatProvider::LlamaCpp => Self::LlamaCpp,
             ChatProvider::DeepSeek => Self::Deepseek,
             ChatProvider::OpenAi => Self::OpenAi,
             ChatProvider::Claude => Self::Claude,
@@ -113,6 +122,7 @@ impl From<Provider> for ChatProvider {
     fn from(provider: Provider) -> Self {
         match provider {
             Provider::Deepseek => Self::DeepSeek,
+            Provider::LlamaCpp => Self::LlamaCpp,
             Provider::OpenAi => Self::OpenAi,
             Provider::Claude => Self::Claude,
             Provider::Mistral => Self::Mistral,
@@ -348,6 +358,11 @@ pub struct RagSettings {
     /// carry a model name into an incompatible API. Missing entries use
     /// [`ChatProvider::default_model`] when the configuration is built.
     pub models: BTreeMap<ChatProvider, String>,
+    /// Base URL of the local llama.cpp server, including `/v1`.
+    ///
+    /// Used when [`Self::provider`] is [`ChatProvider::LlamaCpp`]; other
+    /// providers keep it so switching back restores the server.
+    pub llamacpp_url: String,
     /// Sampling temperature.
     pub temperature: f64,
     /// Maximum generated tokens.
@@ -435,6 +450,8 @@ pub enum RagField {
     Provider,
     /// Model of the active chat backend.
     Model,
+    /// Base URL of the local llama.cpp server.
+    LlamaCppUrl,
     /// Sampling temperature.
     Temperature,
     /// Maximum generated tokens.
@@ -490,6 +507,7 @@ impl RagField {
             Self::Workspace | Self::Bibliography => RagSection::Workspace,
             Self::Provider
             | Self::Model
+            | Self::LlamaCppUrl
             | Self::Temperature
             | Self::MaxTokens
             | Self::ContextTokens
@@ -670,6 +688,10 @@ impl RagSettings {
         changes.mark_if(self.provider != applied.provider, RagField::Provider);
         changes.mark_if(self.models != applied.models, RagField::Model);
         changes.mark_if(
+            self.llamacpp_url != applied.llamacpp_url,
+            RagField::LlamaCppUrl,
+        );
+        changes.mark_if(
             self.temperature != applied.temperature,
             RagField::Temperature,
         );
@@ -837,11 +859,14 @@ impl RagSettings {
                 .unwrap_or_else(default_prompt)
         };
 
+        let llamacpp_url = resolve_llamacpp_base_url(config.chat.llamacpp_base_url.as_deref());
+
         Self {
             workspace: config.workspace.to_string_lossy().into_owned(),
             bibliography: String::new(),
             provider,
             models,
+            llamacpp_url,
             temperature: config.chat.params.temperature.unwrap_or(0.2),
             max_tokens: config.chat.params.max_tokens.unwrap_or(2048),
             context_tokens: config.chat.context_tokens,
@@ -974,6 +999,9 @@ impl RagSettings {
                 seed: None,
             },
             context_tokens: self.context_tokens,
+            llamacpp_base_url: Some(self.llamacpp_url.trim().to_owned()),
+            // Secrets only ever come from the environment.
+            llamacpp_api_key: None,
             system_prompt_path: None,
             ..ChatConfig::default()
         };
@@ -1089,6 +1117,9 @@ impl RagSettings {
         }
         if self.model().trim().is_empty() {
             return Err(format!("choose a {} chat model", self.provider.label()));
+        }
+        if self.provider == ChatProvider::LlamaCpp && self.llamacpp_url.trim().is_empty() {
+            return Err("enter the llama.cpp server URL".to_owned());
         }
         // API keys are read from the environment when the worker builds the
         // agent. A missing key must not block editing settings or saving a
@@ -1385,6 +1416,57 @@ mod tests {
     }
 
     #[test]
+    fn llamacpp_defaults_match_the_upstream_spec() {
+        use ragrig::ChatAgentSpec;
+
+        let spec = ChatAgentSpec::parse("llamacpp", None, None, None).expect("known backend");
+        let model = match spec {
+            ChatAgentSpec::LlamaCpp { model, .. } => model,
+            _ => panic!("unexpected spec for llamacpp"),
+        };
+        assert_eq!(ChatProvider::LlamaCpp.default_model(), model);
+        if std::env::var("LLAMACPP_API_BASE_URL").is_err() {
+            assert_eq!(
+                RagSettings::default().llamacpp_url,
+                ragrig::agents::DEFAULT_LLAMACPP_BASE_URL
+            );
+        }
+    }
+
+    #[test]
+    fn the_llamacpp_url_reaches_the_chat_config() {
+        let mut settings = fixture();
+        settings.provider = ChatProvider::LlamaCpp;
+        settings.llamacpp_url = "http://gpu-box:9000/v1".to_owned();
+
+        let config = settings.to_config().expect("valid configuration");
+        assert_eq!(config.chat.provider, Provider::LlamaCpp);
+        assert_eq!(
+            config.chat.llamacpp_base_url.as_deref(),
+            Some("http://gpu-box:9000/v1")
+        );
+        assert!(
+            config.chat.llamacpp_api_key.is_none(),
+            "keys stay in the environment"
+        );
+
+        let restored = RagSettings::from_config(&config);
+        assert_eq!(restored.provider, ChatProvider::LlamaCpp);
+        assert_eq!(restored.llamacpp_url, "http://gpu-box:9000/v1");
+    }
+
+    #[test]
+    fn a_blank_llamacpp_url_is_rejected() {
+        let mut settings = fixture();
+        settings.provider = ChatProvider::LlamaCpp;
+        settings.llamacpp_url.clear();
+        assert_eq!(
+            settings.validate(),
+            Err("enter the llama.cpp server URL".to_owned())
+        );
+    }
+
+    #[test]
     fn each_provider_keeps_its_own_model() {
         let mut settings = fixture();
         settings.set_model_for(ChatProvider::Ollama, "llama3");
@@ -1407,6 +1489,11 @@ mod tests {
                 ChatProvider::DeepSeek,
                 Provider::Deepseek,
                 "DEEPSEEK_API_KEY",
+            ),
+            (
+                ChatProvider::LlamaCpp,
+                Provider::LlamaCpp,
+                "LLAMACPP_API_KEY",
             ),
             (ChatProvider::OpenAi, Provider::OpenAi, "OPENAI_API_KEY"),
             (ChatProvider::Claude, Provider::Claude, "ANTHROPIC_API_KEY"),
@@ -1434,6 +1521,7 @@ mod tests {
         // must still validate and convert so Apply and profile saves work.
         for provider in [
             ChatProvider::DeepSeek,
+            ChatProvider::LlamaCpp,
             ChatProvider::OpenAi,
             ChatProvider::Claude,
             ChatProvider::Mistral,
@@ -1800,6 +1888,9 @@ mod tests {
             (RagField::Model, |settings| {
                 let model = settings.model().to_owned();
                 settings.set_model(format!("{model}-alt"));
+            }),
+            (RagField::LlamaCppUrl, |settings| {
+                settings.llamacpp_url.push_str(":9090")
             }),
             (RagField::Temperature, |settings| {
                 settings.temperature += 0.1
