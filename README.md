@@ -64,11 +64,30 @@ and a PDF on another drive is recorded absolutely. Renaming is off by default;
 enable it under **Settings → References** if you want the PDFs renamed to
 `Key - Authors - Title - Year`.
 
-With `--features grobid`, **Settings → External services** can discover a
-GROBID server on localhost, test a URL, or pull and run
-`grobid/grobid:0.9.1-full` in Docker. **Auto start** starts the managed
-container whenever the service is created. The managed container listens on
-`127.0.0.1:8070` and is stopped when the service entity drops.
+With `--features managed` (included by `grobid`), **Settings → External
+services** manages three local services: GROBID for reference extraction,
+Ollama for chat and embeddings, and a llama.cpp `llama-server`. Each service
+can use a server that is already running or pull and run an official Docker
+image:
+
+| Service | Existing server | Managed container | Port |
+| --- | --- | --- | --- |
+| GROBID | URL field, discovery on 8070/8080 | `grobid/grobid:0.9.1-full` | `127.0.0.1:8070` |
+| Ollama | `localhost:11434` | `ollama/ollama:latest` | `127.0.0.1:11434` |
+| llama.cpp | the URL from **RAG → Chat** | `ghcr.io/ggml-org/llama.cpp:server` | `127.0.0.1:8080` |
+
+**Auto start** starts a managed container whenever the service entity is
+created. Managed containers run on CPU; use an existing server when you need
+GPU acceleration. Managed Ollama keeps its models in the
+`ragrig-ollama-models` volume; **Pull models** fetches the configured chat,
+embedding, and memory models through the Ollama API. Managed llama.cpp accepts
+a Hugging Face repository (`owner/repo[:quant]`) or an absolute `.gguf` path and
+keeps Hugging Face downloads in `ragrig-llamacpp-models`. Containers are
+recreated when their image or llama.cpp model changes, and are stopped when the
+service entity drops.
+
+Docker problems are reported in the page: a stopped daemon gets a start hint,
+and a user without socket access gets the `usermod -aG docker` remediation.
 
 `RAGRIG_WORKSPACE` defaults to the current directory. `RAGRIG_CORPUS` indexes
 a folder on startup; `RAGRIG_MODEL` and `RAGRIG_EMBED_MODEL` override the
@@ -110,11 +129,12 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
   in Settings rebuilds the agent and reloads the current saved session.
 - **Settings** (right dock): workspace, provider and its model, generation,
   prompt, embeddings, retrieval, PDF backend, chunking, memory, and (with
-  `grobid`) GROBID extraction plus the **Use @key citations** switch. The
-  provider dropdown covers Ollama, llama.cpp, DeepSeek, OpenAI, Claude,
-  Mistral, and OpenRouter; the single **Model** row follows the selected
-  provider and remembers each provider's model, and the **llama.cpp URL** row
-  points the local connector at its `llama-server`. The system prompt
+  `grobid`) GROBID extraction plus the **Use @key citations** switch. With
+  `managed`, **External services** adds GROBID, Ollama, and llama.cpp source and
+  container controls. The provider dropdown covers Ollama, llama.cpp, DeepSeek,
+  OpenAI, Claude, Mistral, and OpenRouter; the single **Model** row follows the
+  selected provider and remembers each provider's model, and the **llama.cpp
+  URL** row points the local connector at its `llama-server`. The system prompt
   is a Markdown file: an empty path uses the host's compiled-in prompt, and a
   host can add **Open prompt**, **Export**, and **Use built-in** actions with
   `PromptActions`. Workspace, bibliography, and prompt have **Browse…**
@@ -149,7 +169,8 @@ cargo run --example spike --no-default-features
 | Feature | Default | Purpose |
 |---|---|---|
 | `ragrig` | yes | `RagController`, `RagChat`, `RagSettings`, Tokio worker |
-| `grobid` | no | GROBID/BibTeX extraction, reference rows, `@key` citations, multi-select bulk actions |
+| `managed` | no | Managed GROBID/Ollama/llama.cpp containers, probes, **External services** page |
+| `grobid` | no | GROBID/BibTeX extraction, reference rows, `@key` citations, multi-select bulk actions (implies `managed`) |
 
 arXiv and Semantic Scholar discovery are deprecated and will not be ported.
 
@@ -232,9 +253,10 @@ ragrig-gpui
   page; hosts that show `external_services_page` use
   `rag_reference_processing_group` instead to avoid a duplicate server URL.
   `external_services_page(settings, service, changes, cx)` and
-  `GrobidService` own the GROBID discovery and Docker lifecycle. Pull and
-  startup progress can be cancelled; the service stops a container it started
-  when the entity drops. Full images are pulled as `linux/amd64`, so hosts on
+  `ExternalServices` own the discovery and Docker lifecycle for GROBID, Ollama,
+  and llama.cpp. Pull, startup, and Ollama model progress can be cancelled; the
+  service stops a container it started when the entity drops. Full GROBID
+  images are pulled as `linux/amd64`, so hosts on
   Apple silicon or `linux/arm64` use emulation; `-crf` images stay native.
   `path_setting`,
   `token_slider`, `SettingRow`, `dirty_color`, and `dirty_header` are exported
@@ -254,15 +276,27 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 156 library tests (three ignored: the GROBID end-to-end test
-and the two Docker-dependent managed-container tests), 2 gallery tests, 5
-active spike tests plus one ignored typing benchmark, and 2 doctests. The
+Current suite: 173 library tests (three ignored: the GROBID end-to-end
+test and the two Docker-dependent managed-container tests), 2 gallery tests,
+5 active spike tests plus one ignored typing benchmark, and 2 doctests. The
 GROBID end-to-end test runs with:
 
 ```sh
 cargo test --all-features grobid_extracts_the_test_library_end_to_end \
   -- --ignored --nocapture
 ```
+
+The managed Ollama tests run against a Docker daemon and a free port 11434:
+
+```sh
+cargo test --all-features the_managed_ollama_container_starts_answers_and_stops \
+  -- --ignored --nocapture
+cargo test --all-features an_existing_ollama_is_adopted_without_a_container \
+  -- --ignored --nocapture
+```
+
+The adoption test needs a server on `http://localhost:11434`; the container
+test skips when the port is already in use.
 
 It copies the PDFs from `test_library/` to a temporary corpus, parses them
 with the running GROBID server, renames them, merges the bibliography, checks

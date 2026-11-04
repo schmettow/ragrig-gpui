@@ -18,9 +18,11 @@
 //! - `ragrig` (default): enables the Ragrig controller, full settings page,
 //!   and the composite [`RagChat`] surface. The worker uses a dedicated Tokio
 //!   runtime thread.
-//! - `grobid`: enables GROBID/BibTeX reference ingestion through
+//! - `managed`: enables the **External services** settings page and the Docker
+//!   lifecycle for GROBID, Ollama, and llama.cpp. It implies `ragrig`.
+//! - `grobid`: additionally enables GROBID/BibTeX reference ingestion through
 //!   [`grobid-bibtex`](https://crates.io/crates/grobid-bibtex), the reference
-//!   rows, and their hover copy actions. It implies `ragrig`.
+//!   rows, and their hover copy actions. It implies `managed`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -39,7 +41,7 @@ pub mod paths;
 mod rag;
 #[cfg(feature = "grobid")]
 mod references;
-#[cfg(feature = "grobid")]
+#[cfg(feature = "managed")]
 mod services;
 mod session_picker;
 mod setting_fields;
@@ -66,11 +68,20 @@ pub use references::{
     ReferenceProgress, ReferenceReport, ReferenceRow, ReferenceSelection, ReferenceSelectionBar,
     ReferenceStage, keys_text, paths_text,
 };
+#[cfg(feature = "managed")]
+pub use services::{
+    ContainerStatus, DockerStatus, ExternalServiceEvent, ExternalServices, GROBID_DISCOVERY_PORTS,
+    LLAMACPP_DISCOVERY_PORTS, MANAGED_GROBID_CONTAINER, MANAGED_GROBID_PORT, MANAGED_GROBID_URL,
+    MANAGED_LLAMACPP_CONTAINER, MANAGED_LLAMACPP_PORT, MANAGED_LLAMACPP_URL,
+    MANAGED_OLLAMA_CONTAINER, MANAGED_OLLAMA_PORT, MANAGED_OLLAMA_URL, OLLAMA_DISCOVERY_PORTS,
+    Probe, ProbeStatus, ServiceKind, ServiceLaunch, docker_message, existing_url,
+    external_services_page, llama_base_url, normalize_grobid_url, normalize_http_url,
+    normalize_url, ollama_models, probe,
+};
 #[cfg(feature = "grobid")]
 pub use services::{
-    GROBID_DISCOVERY_PORTS, GrobidContainerStatus, GrobidDockerStatus, GrobidProbe,
-    GrobidProbeStatus, GrobidService, GrobidServiceEvent, MANAGED_GROBID_CONTAINER,
-    MANAGED_GROBID_PORT, MANAGED_GROBID_URL, external_services_page, normalize_grobid_url,
+    GrobidContainerStatus, GrobidDockerStatus, GrobidProbe, GrobidProbeStatus, GrobidService,
+    GrobidServiceEvent,
 };
 pub use session_picker::{SessionPicker, SessionPickerEvent};
 pub use setting_fields::{

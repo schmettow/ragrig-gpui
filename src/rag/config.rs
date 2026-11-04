@@ -19,6 +19,12 @@ pub const DEFAULT_GROBID_URL: &str = "http://localhost:8070";
 /// The default managed GROBID image: all CRF and Deep Learning models.
 pub const DEFAULT_GROBID_IMAGE: &str = "grobid/grobid:0.9.1-full";
 
+/// The default managed Ollama image.
+pub const DEFAULT_OLLAMA_IMAGE: &str = "ollama/ollama:latest";
+
+/// The default managed llama.cpp server image.
+pub const DEFAULT_LLAMACPP_IMAGE: &str = "ghcr.io/ggml-org/llama.cpp:server";
+
 /// Chat backend offered by the settings page.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ChatProvider {
@@ -207,22 +213,25 @@ impl MemoryChoice {
         ]
     }
 
-    fn uses_model(self) -> bool {
+    pub(crate) fn uses_model(self) -> bool {
         matches!(self, Self::Rewrite | Self::Log | Self::Summary)
     }
 }
 
-/// Where the GROBID server comes from.
+/// Where an external service comes from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum GrobidSource {
+pub enum ServiceSource {
     /// Use a server that is already running (local or remote).
     #[default]
     Existing,
-    /// Let Scico pull and run the official Docker image.
+    /// Let the app pull and run the official Docker image.
     Managed,
 }
 
-impl GrobidSource {
+/// Backwards-compatible name for the GROBID source.
+pub type GrobidSource = ServiceSource;
+
+impl ServiceSource {
     /// Human-readable name, also used as the persisted value.
     pub fn label(self) -> &'static str {
         match self {
@@ -407,10 +416,30 @@ pub struct RagSettings {
     pub grobid_source: GrobidSource,
     /// Base URL of the GROBID server.
     pub grobid_url: String,
-    /// Docker image used when [`Self::grobid_source`] is [`GrobidSource::Managed`].
+    /// Docker image used when [`Self::grobid_source`] is [`ServiceSource::Managed`].
     pub grobid_image: String,
     /// Start the managed GROBID container when the app opens.
     pub grobid_auto_start: bool,
+    /// Where the Ollama server comes from.
+    pub ollama_source: ServiceSource,
+    /// Docker image used when [`Self::ollama_source`] is [`ServiceSource::Managed`].
+    pub ollama_image: String,
+    /// Start the managed Ollama container when the app opens.
+    pub ollama_auto_start: bool,
+    /// Where the llama.cpp server comes from.
+    pub llamacpp_source: ServiceSource,
+    /// Docker image used when [`Self::llamacpp_source`] is [`ServiceSource::Managed`].
+    pub llamacpp_image: String,
+    /// Model the managed llama.cpp container loads.
+    ///
+    /// A Hugging Face repository (`owner/repo[:quant]`) is downloaded by
+    /// `llama-server`; an absolute path to a `.gguf` file is mounted from the
+    /// host instead.
+    pub llamacpp_model: String,
+    /// Extra `llama-server` arguments for the managed container.
+    pub llamacpp_args: String,
+    /// Start the managed llama.cpp container when the app opens.
+    pub llamacpp_auto_start: bool,
     /// Rename PDFs to their metadata name during reference extraction.
     pub rename_pdfs: bool,
     /// Complete extracted references against OpenAlex.
@@ -492,6 +521,22 @@ pub enum RagField {
     GrobidImage,
     /// Start the managed GROBID container when the app opens.
     GrobidAutoStart,
+    /// Where the Ollama server comes from.
+    OllamaSource,
+    /// Docker image for the managed Ollama container.
+    OllamaImage,
+    /// Start the managed Ollama container when the app opens.
+    OllamaAutoStart,
+    /// Where the llama.cpp server comes from.
+    LlamaCppSource,
+    /// Docker image for the managed llama.cpp container.
+    LlamaCppImage,
+    /// Model loaded by the managed llama.cpp container.
+    LlamaCppModel,
+    /// Extra arguments for the managed llama.cpp container.
+    LlamaCppArgs,
+    /// Start the managed llama.cpp container when the app opens.
+    LlamaCppAutoStart,
     /// Rename processed PDFs.
     RenamePdfs,
     /// OpenAlex completion.
@@ -522,9 +567,18 @@ impl RagField {
                 RagSection::Parsing
             }
             Self::Memory | Self::MemoryModel => RagSection::Memory,
-            Self::GrobidSource | Self::GrobidUrl | Self::GrobidImage | Self::GrobidAutoStart => {
-                RagSection::Services
-            }
+            Self::GrobidSource
+            | Self::GrobidUrl
+            | Self::GrobidImage
+            | Self::GrobidAutoStart
+            | Self::OllamaSource
+            | Self::OllamaImage
+            | Self::OllamaAutoStart
+            | Self::LlamaCppSource
+            | Self::LlamaCppImage
+            | Self::LlamaCppModel
+            | Self::LlamaCppArgs
+            | Self::LlamaCppAutoStart => RagSection::Services,
             Self::RenamePdfs | Self::OpenAlex | Self::ResolveCitations => RagSection::References,
         }
     }
@@ -545,7 +599,7 @@ pub enum RagSection {
     Memory,
     /// Renaming, OpenAlex, and citations.
     References,
-    /// External services such as the GROBID server.
+    /// External services such as GROBID, Ollama, and llama.cpp.
     Services,
 }
 
@@ -749,6 +803,38 @@ impl RagSettings {
             RagField::GrobidAutoStart,
         );
         changes.mark_if(
+            self.ollama_source != applied.ollama_source,
+            RagField::OllamaSource,
+        );
+        changes.mark_if(
+            self.ollama_image != applied.ollama_image,
+            RagField::OllamaImage,
+        );
+        changes.mark_if(
+            self.ollama_auto_start != applied.ollama_auto_start,
+            RagField::OllamaAutoStart,
+        );
+        changes.mark_if(
+            self.llamacpp_source != applied.llamacpp_source,
+            RagField::LlamaCppSource,
+        );
+        changes.mark_if(
+            self.llamacpp_image != applied.llamacpp_image,
+            RagField::LlamaCppImage,
+        );
+        changes.mark_if(
+            self.llamacpp_model != applied.llamacpp_model,
+            RagField::LlamaCppModel,
+        );
+        changes.mark_if(
+            self.llamacpp_args != applied.llamacpp_args,
+            RagField::LlamaCppArgs,
+        );
+        changes.mark_if(
+            self.llamacpp_auto_start != applied.llamacpp_auto_start,
+            RagField::LlamaCppAutoStart,
+        );
+        changes.mark_if(
             self.rename_pdfs != applied.rename_pdfs,
             RagField::RenamePdfs,
         );
@@ -778,6 +864,14 @@ impl RagSettings {
         let grobid_url = self.grobid_url.clone();
         let grobid_image = self.grobid_image.clone();
         let grobid_auto_start = self.grobid_auto_start;
+        let ollama_source = self.ollama_source;
+        let ollama_image = self.ollama_image.clone();
+        let ollama_auto_start = self.ollama_auto_start;
+        let llamacpp_source = self.llamacpp_source;
+        let llamacpp_image = self.llamacpp_image.clone();
+        let llamacpp_model = self.llamacpp_model.clone();
+        let llamacpp_args = self.llamacpp_args.clone();
+        let llamacpp_auto_start = self.llamacpp_auto_start;
         let mut defaults = Self {
             workspace,
             bibliography,
@@ -785,6 +879,14 @@ impl RagSettings {
             grobid_url,
             grobid_image,
             grobid_auto_start,
+            ollama_source,
+            ollama_image,
+            ollama_auto_start,
+            llamacpp_source,
+            llamacpp_image,
+            llamacpp_model,
+            llamacpp_args,
+            llamacpp_auto_start,
             profile_name: self.profile_name.clone(),
             built_in_prompt: built_in_prompt.clone(),
             system_prompt: built_in_prompt,
@@ -888,6 +990,14 @@ impl RagSettings {
             grobid_url: DEFAULT_GROBID_URL.to_owned(),
             grobid_image: DEFAULT_GROBID_IMAGE.to_owned(),
             grobid_auto_start: false,
+            ollama_source: ServiceSource::Existing,
+            ollama_image: DEFAULT_OLLAMA_IMAGE.to_owned(),
+            ollama_auto_start: false,
+            llamacpp_source: ServiceSource::Existing,
+            llamacpp_image: DEFAULT_LLAMACPP_IMAGE.to_owned(),
+            llamacpp_model: String::new(),
+            llamacpp_args: String::new(),
+            llamacpp_auto_start: false,
             rename_pdfs: false,
             openalex: false,
             resolve_citations: true,
@@ -1161,6 +1271,20 @@ impl RagSettings {
         if self.grobid_source == GrobidSource::Managed && self.grobid_image.trim().is_empty() {
             return Err("enter the Docker image for the managed GROBID container".to_owned());
         }
+        if self.ollama_source == ServiceSource::Managed && self.ollama_image.trim().is_empty() {
+            return Err("enter the Docker image for the managed Ollama container".to_owned());
+        }
+        if self.llamacpp_source == ServiceSource::Managed {
+            if self.llamacpp_image.trim().is_empty() {
+                return Err("enter the Docker image for the managed llama.cpp container".to_owned());
+            }
+            if self.llamacpp_model.trim().is_empty() {
+                return Err(
+                    "enter a Hugging Face model or a .gguf file for the managed llama.cpp container"
+                        .to_owned(),
+                );
+            }
+        }
         for entry in &self.corpus_dirs {
             let entry = entry.trim();
             if entry.is_empty() {
@@ -1267,12 +1391,28 @@ impl RagSettings {
         let grobid_url = self.grobid_url.clone();
         let grobid_image = self.grobid_image.clone();
         let grobid_auto_start = self.grobid_auto_start;
+        let ollama_source = self.ollama_source;
+        let ollama_image = self.ollama_image.clone();
+        let ollama_auto_start = self.ollama_auto_start;
+        let llamacpp_source = self.llamacpp_source;
+        let llamacpp_image = self.llamacpp_image.clone();
+        let llamacpp_model = self.llamacpp_model.clone();
+        let llamacpp_args = self.llamacpp_args.clone();
+        let llamacpp_auto_start = self.llamacpp_auto_start;
         let mut loaded = Self::from_config(&config);
         loaded.hybrid = hybrid;
         loaded.grobid_source = grobid_source;
         loaded.grobid_url = grobid_url;
         loaded.grobid_image = grobid_image;
         loaded.grobid_auto_start = grobid_auto_start;
+        loaded.ollama_source = ollama_source;
+        loaded.ollama_image = ollama_image;
+        loaded.ollama_auto_start = ollama_auto_start;
+        loaded.llamacpp_source = llamacpp_source;
+        loaded.llamacpp_image = llamacpp_image;
+        loaded.llamacpp_model = llamacpp_model;
+        loaded.llamacpp_args = llamacpp_args;
+        loaded.llamacpp_auto_start = llamacpp_auto_start;
         loaded.profiles = profiles;
         loaded.profile_name = name.to_owned();
         loaded.built_in_prompt = built_in_prompt.clone();
@@ -1847,6 +1987,30 @@ mod tests {
     }
 
     #[test]
+    fn local_model_services_default_to_existing_servers() {
+        let settings = RagSettings::default();
+        assert_eq!(settings.ollama_source, ServiceSource::Existing);
+        assert_eq!(settings.ollama_image, DEFAULT_OLLAMA_IMAGE.to_owned());
+        assert!(!settings.ollama_auto_start);
+        assert_eq!(settings.llamacpp_source, ServiceSource::Existing);
+        assert_eq!(settings.llamacpp_image, DEFAULT_LLAMACPP_IMAGE.to_owned());
+        assert!(settings.llamacpp_model.is_empty());
+        assert!(settings.llamacpp_args.is_empty());
+        assert!(!settings.llamacpp_auto_start);
+    }
+
+    #[test]
+    fn a_managed_llamacpp_container_requires_a_model() {
+        let mut settings = RagSettings {
+            llamacpp_source: ServiceSource::Managed,
+            ..RagSettings::default()
+        };
+        assert!(settings.validate().is_err());
+        settings.llamacpp_model = "owner/model:Q4_K_M".to_owned();
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
     fn changes_name_changed_fields_and_their_sections() {
         let applied = fixture();
         let mut settings = applied.clone();
@@ -1945,6 +2109,30 @@ mod tests {
             }),
             (RagField::GrobidAutoStart, |settings| {
                 settings.grobid_auto_start = !settings.grobid_auto_start
+            }),
+            (RagField::OllamaSource, |settings| {
+                settings.ollama_source = ServiceSource::Managed
+            }),
+            (RagField::OllamaImage, |settings| {
+                settings.ollama_image.push_str(":rocm")
+            }),
+            (RagField::OllamaAutoStart, |settings| {
+                settings.ollama_auto_start = !settings.ollama_auto_start
+            }),
+            (RagField::LlamaCppSource, |settings| {
+                settings.llamacpp_source = ServiceSource::Managed
+            }),
+            (RagField::LlamaCppImage, |settings| {
+                settings.llamacpp_image.push_str("-cuda")
+            }),
+            (RagField::LlamaCppModel, |settings| {
+                settings.llamacpp_model = "owner/model:Q4_K_M".to_owned()
+            }),
+            (RagField::LlamaCppArgs, |settings| {
+                settings.llamacpp_args = "--n-gpu-layers all".to_owned()
+            }),
+            (RagField::LlamaCppAutoStart, |settings| {
+                settings.llamacpp_auto_start = !settings.llamacpp_auto_start
             }),
             (RagField::RenamePdfs, |settings| {
                 settings.rename_pdfs = !settings.rename_pdfs

@@ -5,6 +5,63 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.8.0 — 2026-11-04
+
+### Added
+
+- **Managed Ollama and llama.cpp containers.** **Settings → External services**
+  now manages all three services through one `ExternalServices` controller.
+  Each service has a source (**Existing server** or **Docker container**), a
+  Docker image, an **Auto start** switch, pull/start progress with cancellation,
+  **Stop**, **Remove container**, and **Refresh**. Defaults are
+  `ollama/ollama:latest` on `127.0.0.1:11434` and
+  `ghcr.io/ggml-org/llama.cpp:server` on `127.0.0.1:8080`.
+- **Ollama model provisioning.** A new **Pull models** action streams the
+  configured chat, embedding, and memory models through `/api/pull`. Models are
+  stored in the `ragrig-ollama-models` volume, so they survive container
+  removal. The status line reports per-model progress.
+- **Managed llama.cpp startup.** The container accepts a Hugging Face
+  repository (`owner/repo[:quant]`) with `-hf` or an absolute `.gguf` path,
+  mounts Hugging Face downloads from the `ragrig-llamacpp-models` volume, and
+  passes extra `llama-server` arguments. Startup polls `/health` and waits up to
+  ten minutes for a model download and load.
+- **Docker diagnostics.** A stopped daemon reports how to start Docker Desktop
+  or the system daemon; a user without socket permissions gets the
+  `sudo usermod -aG docker $USER` remediation. Port conflicts, missing images,
+  unsupported platforms, and registry authentication failures get dedicated
+  messages. A startup timeout appends the last container log lines.
+- **Container configuration refresh.** **Pull and start** recreates a container
+  whose image or llama.cpp command no longer matches the settings.
+
+### Changed
+
+- **Breaking: the service API is generic.** `ExternalServices`,
+  `ExternalServiceEvent`, `ContainerStatus`, `DockerStatus`, `Probe`, and
+  `ProbeStatus` replace the GROBID-only names; the old names remain as type
+  aliases behind the `grobid` feature. Events carry a `ServiceKind`, and methods
+  take it as their first argument. `ExternalServiceEvent::UrlChanged` now
+  carries the service and URL.
+- **New `managed` feature.** It enables the Docker lifecycle and implies
+  `ragrig`; `grobid` now implies `managed` and only adds BibTeX ingestion.
+- `RagSettings` gains `ollama_source`, `ollama_image`, `ollama_auto_start`,
+  `llamacpp_source`, `llamacpp_image`, `llamacpp_model`, `llamacpp_args`, and
+  `llamacpp_auto_start`, with matching `RagField` variants in
+  `RagSection::Services`. `ServiceSource` replaces `GrobidSource`, which remains
+  an alias. Profiles preserve the new service choices like the existing GROBID
+  fields.
+- `ServiceLaunch` and `ServiceKind` are public so hosts can build custom start
+  actions without reading the settings page internals.
+
+### Quality
+
+`cargo fmt --check`, `cargo check --all-targets --all-features`, `cargo test
+--all-features`, and `cargo clippy --all-targets --all-features -- -D warnings`
+are green. Tests: 173 unit tests passed (3 Docker-dependent tests ignored),
+2 gallery tests, 5 spike tests passed (1 ignored), and 2 doctests —
+**182 passed, 0 failed, 4 ignored**. New coverage exercises URL normalization,
+container bodies and ports for all three services, named volumes, llama.cpp
+command construction, Ollama model selection, and the Docker error classifier.
+
 ## v0.7.1 — 2026-11-04
 
 - Updated **async_channels** (`Cargo.lock`), because it was yanked.

@@ -23,12 +23,12 @@ pub use crate::{
 #[cfg(feature = "ragrig")]
 pub use crate::rag::{
     AgentInfo, AttachmentSource, Changes, ChatProvider, DEFAULT_GROBID_IMAGE, DEFAULT_GROBID_URL,
-    ExportPrompt, GrobidSource, IngestPhase, IngestProgress, LibraryDocument, LibrarySnapshot,
-    MemoryChoice, OpenPrompt, PdfBackend, PendingAttachment, PromptActions, RagChanges, RagChat,
-    RagChatEvent, RagCommand, RagController, RagEvent, RagField, RagReply, RagSection, RagSettings,
-    RagSetup, RequestId, ScicoAttach, SessionInfo, SessionTurn, SyncSummary, no_changes,
-    rag_model_page, rag_reference_processing_group, rag_references_group, rag_settings,
-    rag_settings_page,
+    DEFAULT_LLAMACPP_IMAGE, DEFAULT_OLLAMA_IMAGE, ExportPrompt, GrobidSource, IngestPhase,
+    IngestProgress, LibraryDocument, LibrarySnapshot, MemoryChoice, OpenPrompt, PdfBackend,
+    PendingAttachment, PromptActions, RagChanges, RagChat, RagChatEvent, RagCommand, RagController,
+    RagEvent, RagField, RagReply, RagSection, RagSettings, RagSetup, RequestId, ScicoAttach,
+    ServiceSource, SessionInfo, SessionTurn, SyncSummary, no_changes, rag_model_page,
+    rag_reference_processing_group, rag_references_group, rag_settings, rag_settings_page,
 };
 
 #[cfg(feature = "grobid")]
@@ -38,9 +38,18 @@ pub use crate::references::{
     ReferenceStage, keys_text, paths_text,
 };
 
+#[cfg(feature = "managed")]
+pub use crate::services::{
+    ContainerStatus, DockerStatus, ExternalServiceEvent, ExternalServices, GROBID_DISCOVERY_PORTS,
+    LLAMACPP_DISCOVERY_PORTS, MANAGED_GROBID_CONTAINER, MANAGED_GROBID_PORT, MANAGED_GROBID_URL,
+    MANAGED_LLAMACPP_CONTAINER, MANAGED_LLAMACPP_PORT, MANAGED_LLAMACPP_URL,
+    MANAGED_OLLAMA_CONTAINER, MANAGED_OLLAMA_PORT, MANAGED_OLLAMA_URL, OLLAMA_DISCOVERY_PORTS,
+    Probe, ProbeStatus, ServiceKind, ServiceLaunch, docker_message, existing_url,
+    external_services_page, llama_base_url, normalize_grobid_url, normalize_http_url,
+    normalize_url, ollama_models, probe,
+};
 #[cfg(feature = "grobid")]
 pub use crate::services::{
-    GROBID_DISCOVERY_PORTS, GrobidContainerStatus, GrobidDockerStatus, GrobidProbe,
-    GrobidProbeStatus, GrobidService, GrobidServiceEvent, MANAGED_GROBID_CONTAINER,
-    MANAGED_GROBID_PORT, MANAGED_GROBID_URL, external_services_page, normalize_grobid_url,
+    GrobidContainerStatus, GrobidDockerStatus, GrobidProbe, GrobidProbeStatus, GrobidService,
+    GrobidServiceEvent,
 };
