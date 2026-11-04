@@ -3761,6 +3761,8 @@ dependencies = [
 [[package]]
 name = "grobid-bibtex"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7b4979a55901b10a44f1e1cb52d8f88edfbe3f8d9d43ab602fd9e8e15034ef5"
 dependencies = [
  "biblatex",
  "grobid",
