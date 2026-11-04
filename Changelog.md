@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **File dialogs open in the current folder.** `prompt_for_paths_at()` asks the
+  XDG portal for a file chooser with a `current_folder` on Linux (GPUI's own
+  prompt has no such option); other platforms keep the platform prompt. Every
+  **Browse…** button in a path field starts at the current value's directory.
+- **Paths below home are shown as `~/…`.** The new `paths` module provides
+  `home_relative()`/`expand_home()` and the `path_control_home()` field, which
+  displays `~/paper`, expands a typed `~` back to an absolute path, and applies
+  edits on Enter or blur so a half-typed home path cannot be committed. The
+  existing `path_control()` is unchanged in width and keeps applying on change.
 - **GROBID writes workspace-relative document links.** New `file` fields name
   the PDF relative to the configured workspace, so a bibliography and its
   corpus can move together. Without a workspace the home directory is the
@@ -21,12 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attaching its papers. `load_entries()` gained the workspace parameter.
 - `grobid-bibtex` now resolves from 0.4 (path `../grobid-bibtex` during
   development). Its pre-pass merge API takes a `FileLink` instead of a
-  boolean.
+  boolean. On Linux, `ashpd` (already in the GPUI stack) and `url` back the
+  portal file chooser.
 
 ### Quality
 
 - Validated with `cargo fmt --check`, `cargo check --all-targets
-  --all-features`, `cargo test --all-features` (154 unit tests, 3 ignored;
+  --all-features`, `cargo test --all-features` (156 unit tests, 3 ignored;
   2 gallery tests, 5 spike tests, 1 ignored; 2 doctests — all passing),
   `cargo clippy --all-targets --all-features -- -D warnings` and `cargo doc
   --no-deps --all-features` (all green).

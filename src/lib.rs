@@ -34,6 +34,7 @@ pub mod editor;
 mod icon;
 mod markdown;
 mod model;
+pub mod paths;
 #[cfg(feature = "ragrig")]
 mod rag;
 #[cfg(feature = "grobid")]
@@ -56,6 +57,7 @@ pub use editor::*;
 pub use icon::ChatIcon;
 pub use markdown::stabilize_markdown;
 pub use model::*;
+pub use paths::{expand_home, home_relative, prompt_for_paths_at};
 #[cfg(feature = "ragrig")]
 pub use rag::*;
 #[cfg(feature = "grobid")]
@@ -73,7 +75,8 @@ pub use services::{
 pub use session_picker::{SessionPicker, SessionPickerEvent};
 pub use setting_fields::{
     Control, SettingRow, control, dirty_color, dirty_header, dropdown_control, number_control,
-    path_control, path_setting, switch_control, text_control, token_control, token_slider,
+    path_control, path_control_home, path_setting, switch_control, text_control, token_control,
+    token_slider,
 };
 pub use settings::{chat_settings, chat_settings_page};
 pub use side_panel::SidePanel;

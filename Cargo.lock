@@ -6553,6 +6553,7 @@ name = "ragrig-gpui"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "ashpd",
  "async-channel",
  "async-trait",
  "biblatex",
@@ -6567,6 +6568,7 @@ dependencies = [
  "reqwest",
  "serde_json",
  "tokio",
+ "url",
 ]
 
 [[package]]

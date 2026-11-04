@@ -39,6 +39,12 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "
 biblatex = { version = "0.12", optional = true }
 grobid-bibtex = { version = "0.4", path = "../grobid-bibtex", features = ["pipeline"], optional = true }
 
+# GPUI's `prompt_for_paths` has no starting directory. On Linux the XDG
+# portal supports one, so the path fields ask it directly.
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "file_chooser"] }
+url = "2"
+
 [dev-dependencies]
 anyhow = "1"
 async-trait = "0.1"

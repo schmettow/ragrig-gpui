@@ -8,12 +8,12 @@
 //! style its title, so unsaved settings use [`SettingRow`], which draws the
 //! title itself and marks it while it differs from the applied configuration.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, path::Path, rc::Rc};
 
 use gpui_kit::{
-    Anchor, AnyElement, App, AppContext as _, Axis, ElementId, Entity, FontWeight, Hsla,
-    InteractiveElement as _, IntoElement, ParentElement as _, PathPromptOptions, SharedString,
-    Styled as _, Subscription, Window,
+    Anchor, AnyElement, App, AppContext as _, Axis, ElementId, Entity, Focusable as _, FontWeight,
+    Hsla, InteractiveElement as _, IntoElement, ParentElement as _, PathPromptOptions, Pixels,
+    SharedString, Styled as _, Subscription, Window,
     component::{
         ActiveTheme as _, AxisExt as _, Disableable as _, Sizable as _,
         button::Button,
@@ -30,9 +30,19 @@ use gpui_kit::{
     px,
 };
 
+use crate::paths::{expand_home, home_relative, prompt_for_paths_at, start_directory};
+
 struct PathInputState {
     input: Entity<InputState>,
     _subscription: Subscription,
+}
+
+#[derive(Clone, Copy)]
+struct PathOptions {
+    directories: bool,
+    files: bool,
+    width: Pixels,
+    home: bool,
 }
 
 type PathSetter = Rc<dyn Fn(String, &mut App)>;
@@ -83,9 +93,94 @@ where
     G: Fn(&App) -> String + 'static,
     S: Fn(String, &mut App) + 'static,
 {
-    let setter: PathSetter = Rc::new(set_value);
+    path_control_with(
+        key,
+        prompt,
+        PathOptions {
+            directories,
+            files,
+            width: px(340.),
+            home: false,
+        },
+        value,
+        set_value,
+    )
+}
+
+/// A path control that shows paths below the home directory as `~/…` and
+/// writes a leading `~` back as an absolute path.
+///
+/// `value` reads the stored path and `set_value` receives an absolute path.
+/// Unlike [`path_control`], the value is applied on Enter or blur rather than
+/// on every keystroke, so expanding `~` cannot scaffold a half-typed folder.
+/// `width` is the whole row (input and **Browse…**).
+pub fn path_control_home<G, S>(
+    key: &'static str,
+    prompt: &'static str,
+    directories: bool,
+    files: bool,
+    width: Pixels,
+    value: G,
+    set_value: S,
+) -> Control
+where
+    G: Fn(&App) -> String + 'static,
+    S: Fn(String, &mut App) + 'static,
+{
+    path_control_with(
+        key,
+        prompt,
+        PathOptions {
+            directories,
+            files,
+            width,
+            home: true,
+        },
+        value,
+        set_value,
+    )
+}
+
+fn path_control_with<G, S>(
+    key: &'static str,
+    prompt: &'static str,
+    options: PathOptions,
+    value: G,
+    set_value: S,
+) -> Control
+where
+    G: Fn(&App) -> String + 'static,
+    S: Fn(String, &mut App) + 'static,
+{
+    let PathOptions {
+        directories,
+        files,
+        width,
+        home,
+    } = options;
+    let setter: PathSetter = Rc::new(move |text, cx| {
+        let trimmed = text.trim();
+        // A bare `~` or `~/` is not a committed path: expanding it on blur
+        // would point the workspace at the home directory while the user is
+        // still typing. Empty stays empty so a field can be cleared.
+        if home && matches!(trimmed, "~" | "~/" | "~\\") {
+            return;
+        }
+        let text = if home {
+            expand_home(trimmed).display().to_string()
+        } else {
+            text
+        };
+        set_value(text, cx);
+    });
+    let value: Rc<dyn Fn(&App) -> String> = Rc::new(value);
     control(move |options, window, cx| {
-        let current: SharedString = value(cx).into();
+        let raw = value(cx);
+        let current: SharedString = if home {
+            home_relative(Path::new(&raw)).into()
+        } else {
+            raw.clone().into()
+        };
         let keyed = SharedString::from(format!(
             "path-field-{key}-{}-{}-{}",
             options.page_ix(),
@@ -93,13 +188,31 @@ where
             options.item_ix()
         ));
         let setter_for_input = setter.clone();
+        let value_for_blur = value.clone();
         let state = window.use_keyed_state(keyed.clone(), cx, {
             let current = current.clone();
             move |window, cx| {
                 let input = cx.new(|cx| InputState::new(window, cx).default_value(current.clone()));
+                let stored_value = value_for_blur.clone();
                 let subscription = cx.subscribe(&input, move |_, input, event: &InputEvent, cx| {
-                    if matches!(event, InputEvent::Change) {
-                        setter_for_input(input.read(cx).value().trim().to_owned(), cx);
+                    let text = input.read(cx).value().trim().to_owned();
+                    let apply = match event {
+                        InputEvent::Change => !home,
+                        InputEvent::PressEnter { .. } | InputEvent::Blur => {
+                            // Blur also fires when nothing was edited (for
+                            // example on a Browse click); re-applying the
+                            // stored path would re-adopt the workspace.
+                            let expanded = if home {
+                                expand_home(&text).display().to_string()
+                            } else {
+                                text.clone()
+                            };
+                            expanded != stored_value(cx)
+                        }
+                        InputEvent::Focus => false,
+                    };
+                    if apply {
+                        setter_for_input(text, cx);
                     }
                 });
                 PathInputState {
@@ -110,7 +223,8 @@ where
         });
 
         let input = state.read(cx).input.clone();
-        if input.read(cx).value() != current {
+        let focused = input.read(cx).focus_handle(cx).is_focused(window);
+        if !focused && input.read(cx).value() != current {
             input.update(cx, |input, cx| {
                 input.set_value(current, window, cx);
             });
@@ -118,6 +232,7 @@ where
 
         let browse_id = ElementId::Name(SharedString::from(format!("{keyed}-browse")));
         let setter_for_browse = setter.clone();
+        let start = start_directory(&raw);
         let browse = {
             let input = input.clone();
             Button::new(browse_id)
@@ -126,25 +241,34 @@ where
                 .outline()
                 .disabled(options.is_disabled())
                 .on_click(move |_, window, cx| {
-                    let receiver = cx.prompt_for_paths(PathPromptOptions {
-                        files,
-                        directories,
-                        multiple: false,
-                        prompt: Some(prompt.into()),
-                    });
+                    let receiver = prompt_for_paths_at(
+                        cx,
+                        start.clone(),
+                        PathPromptOptions {
+                            files,
+                            directories,
+                            multiple: false,
+                            prompt: Some(prompt.into()),
+                        },
+                    );
                     let input = input.clone();
                     let setter = setter_for_browse.clone();
                     window
                         .spawn(cx, async move |cx| {
-                            let Ok(Ok(Some(paths))) = receiver.await else {
+                            let Ok(Some(paths)) = receiver.await else {
                                 return;
                             };
                             let Some(path) = paths.into_iter().next() else {
                                 return;
                             };
                             let value = path.display().to_string();
+                            let display = if home {
+                                home_relative(&path)
+                            } else {
+                                value.clone()
+                            };
                             let _ = input.update_in(cx, |input, window, cx| {
-                                input.set_value(value.clone(), window, cx);
+                                input.set_value(display, window, cx);
                             });
                             let _ = cx.update(|_window, cx| setter(value, cx));
                         })
@@ -153,7 +277,7 @@ where
         };
 
         h_flex()
-            .w(px(340.))
+            .w(width)
             .gap_2()
             .items_center()
             .child(

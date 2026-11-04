@@ -14,9 +14,10 @@ pub use crate::{
     ReplacementTarget, Roundtrip, RoundtripContext, RoundtripHost, RoundtripKind, SelectionContext,
     SelectionSnapshot, SessionEntry, SessionPicker, SessionPickerEvent, SettingRow, SidePanel,
     SourceRef, byte_to_char_index, char_range_to_bytes, chat_settings, chat_settings_page,
-    context_note, control, digest, dirty_color, dirty_header, dropdown_control, missing_markers,
-    number_control, path_control, path_setting, replace_at, switch_control, text_control,
-    token_control, token_slider, verified_bytes,
+    context_note, control, digest, dirty_color, dirty_header, dropdown_control, expand_home,
+    home_relative, missing_markers, number_control, path_control, path_control_home, path_setting,
+    prompt_for_paths_at, replace_at, switch_control, text_control, token_control, token_slider,
+    verified_bytes,
 };
 
 #[cfg(feature = "ragrig")]
