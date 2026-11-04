@@ -35,11 +35,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Quality
 
-- Validated with `cargo fmt --check`, `cargo check --all-targets
-  --all-features`, `cargo test --all-features` (156 unit tests, 3 ignored;
-  2 gallery tests, 5 spike tests, 1 ignored; 2 doctests — all passing),
-  `cargo clippy --all-targets --all-features -- -D warnings` and `cargo doc
-  --no-deps --all-features` (all green).
+Release validation on 2026-11-04 (Cargo 1.99.0, rustc 1.99.0).
+
+**Test coverage.** `cargo llvm-cov --all-features --summary-only` (doctests are
+not measured on stable Rust):
+
+| Metric | Covered | Total | Cover |
+| --- | ---: | ---: | ---: |
+| Regions | 11,687 | 19,080 | 61.25% |
+| Functions | 856 | 1,494 | 57.30% |
+| Lines | 7,018 | 12,029 | 58.34% |
+
+The least covered areas are the Docker/GROBID service
+(`src/services/grobid.rs` 18.96% lines), the worker controller
+(`src/rag/controller.rs` 12.30%), the headless UI surfaces
+(`src/rag/chat.rs`, `src/rag/settings_page.rs`, and
+`src/services/settings_page.rs`, 0%), `src/session_picker.rs` (39.74%),
+`src/setting_fields.rs` (35.88%), the new `src/paths.rs` (54.31%, the Linux
+portal branch is not exercised headlessly), and `src/editor/host.rs` (68.51%).
+The Docker-dependent tests are marked `#[ignore]`; the settings and host pages
+are exercised through the example applications.
+
+**Tests.** `cargo test --all-features`: 156 unit tests (3 ignored), 2 gallery
+tests, 5 spike tests (1 ignored), and 2 doctests — **165 passed, 0 failed, 4
+ignored**.
+
+**Checks.** `cargo fmt --check`, `cargo check --all-targets --all-features`,
+`cargo test --all-features`, `cargo clippy --all-targets --all-features -- -D
+warnings`, and `cargo doc --no-deps --all-features` (with
+`RUSTDOCFLAGS="-D warnings"`) are green. `cargo package --list --allow-dirty`
+ships 47 files and excludes `test_library/` and `PLAN.md`; `src/paths.rs` is
+included.
+
+**Release blocker.** `cargo publish --dry-run --allow-dirty` cannot resolve
+`grobid-bibtex = "^0.4"`: crates.io still offers 0.3.1. Publish
+grobid-bibtex 0.4.0 first, then re-run the dry run for this crate. This is the
+expected publication order, not a code problem.
 
 ## v0.6.1 — 2026-11-01
 
