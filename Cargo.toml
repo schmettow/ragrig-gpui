@@ -1,6 +1,6 @@
 [package]
 name = "ragrig-gpui"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -37,7 +37,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "j
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "io-util"], optional = true }
 biblatex = { version = "0.12", optional = true }
-grobid-bibtex = { version = "0.3", features = ["pipeline"], optional = true }
+grobid-bibtex = { version = "0.4", path = "../grobid-bibtex", features = ["pipeline"], optional = true }
 
 [dev-dependencies]
 anyhow = "1"

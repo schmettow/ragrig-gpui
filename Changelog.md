@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.7.0 — 2026-11-04
+
+### Changed
+
+- **GROBID writes workspace-relative document links.** New `file` fields name
+  the PDF relative to the configured workspace, so a bibliography and its
+  corpus can move together. Without a workspace the home directory is the
+  base; `None` only when neither exists. A PDF on another drive is recorded
+  absolutely. This uses `grobid-bibtex` 0.4 and its `bibtex::FileLink`.
+- **Both link styles are read.** `load_entries()` accepts absolute fields,
+  workspace-relative fields, bibliography-relative fields, and the older
+  corpus-relative fields, in that order. `@key` citation resolution passes the
+  workspace base to `CiteState::locate_with_base()`, so a moved project keeps
+  attaching its papers. `load_entries()` gained the workspace parameter.
+- `grobid-bibtex` now resolves from 0.4 (path `../grobid-bibtex` during
+  development). Its pre-pass merge API takes a `FileLink` instead of a
+  boolean.
+
+### Quality
+
+- Validated with `cargo fmt --check`, `cargo check --all-targets
+  --all-features`, `cargo test --all-features` (154 unit tests, 3 ignored;
+  2 gallery tests, 5 spike tests, 1 ignored; 2 doctests — all passing),
+  `cargo clippy --all-targets --all-features -- -D warnings` and `cargo doc
+  --no-deps --all-features` (all green).
+
 ## v0.6.1 — 2026-11-01
 
 0.6.1 is the first published release in the 0.6 line.

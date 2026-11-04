@@ -303,7 +303,8 @@ async fn handle(command: RagCommand, shared: Arc<Shared>, events: Sender<RagEven
         RagCommand::RefreshReferences { folder } => {
             remember_citation_folder(&shared, &folder);
             let bibliography = bibliography_path(&shared);
-            match references::load_entries(&bibliography, &folder) {
+            let base = link_base(&shared);
+            match references::load_entries(&bibliography, &folder, base.as_deref()) {
                 Ok(entries) => {
                     let _ = events
                         .send(RagEvent::ReferencesLoaded {
@@ -893,6 +894,7 @@ async fn resolve_query_citations(shared: &Arc<Shared>, prompt: &str) -> Citation
         setup.clone()
     };
     let bibliography = bibliography_path(shared);
+    let base = references::link_base(&setup.config.workspace);
     let shared = Arc::clone(shared);
     match tokio::task::spawn_blocking(move || {
         let corpora: Vec<PathBuf> = shared
@@ -904,7 +906,14 @@ async fn resolve_query_citations(shared: &Arc<Shared>, prompt: &str) -> Citation
             .collect();
         let parsers = DocumentParsers::new(filtered_parsers(&setup.config.parse));
         let mut state = shared.citations.lock().expect("citation state");
-        references::resolve_citations(&mut state, &bibliography, &corpora, &keys, &parsers)
+        references::resolve_citations(
+            &mut state,
+            &bibliography,
+            base.as_deref(),
+            &corpora,
+            &keys,
+            &parsers,
+        )
     })
     .await
     {
@@ -928,6 +937,13 @@ fn bibliography_path(shared: &Shared) -> PathBuf {
         .unwrap_or_else(|| setup.config.workspace.join(".ragrig/references.bib"))
 }
 
+/// The directory relative `file` fields are written and resolved against.
+#[cfg(feature = "grobid")]
+fn link_base(shared: &Shared) -> Option<PathBuf> {
+    let workspace = shared.setup.lock().expect("setup").config.workspace.clone();
+    references::link_base(&workspace)
+}
+
 #[cfg(feature = "grobid")]
 async fn run_references(
     shared: Arc<Shared>,
@@ -938,6 +954,7 @@ async fn run_references(
     events: Sender<RagEvent>,
 ) {
     let bibliography = bibliography_path(&shared);
+    let base = link_base(&shared);
     let _ = events
         .send(RagEvent::ReferencesStarted {
             id,
@@ -955,7 +972,15 @@ async fn run_references(
         cancel: Some(&is_cancelled),
     };
 
-    match references::extract(&folder, &bibliography, &options, &mut observer).await {
+    match references::extract(
+        &folder,
+        &bibliography,
+        base.as_deref(),
+        &options,
+        &mut observer,
+    )
+    .await
+    {
         Ok((entries, report)) => {
             let _ = events
                 .send(RagEvent::ReferencesLoaded {
@@ -1790,12 +1815,11 @@ mod tests {
         std::fs::write(&paper, "CITED PAPER BODY").expect("paper");
         let bibliography = workspace.join(".ragrig/references.bib");
         std::fs::create_dir_all(bibliography.parent().expect("parent")).expect("ragrig dir");
+        // Relative to the workspace: the worker resolves `file` fields against
+        // its configured workspace, not the corpus folder.
         std::fs::write(
             &bibliography,
-            format!(
-                "@article{{Kano2025,\n  author = {{Kano, Fumihiro}},\n  year = {{2025}},\n  title = {{Gaze}},\n  file = {{{}}}\n}}\n",
-                paper.display()
-            ),
+            "@article{Kano2025,\n  author = {Kano, Fumihiro},\n  year = {2025},\n  title = {Gaze},\n  file = {papers/Kano2025.md}\n}\n",
         )
         .expect("bibliography");
 

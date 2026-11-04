@@ -58,8 +58,11 @@ cargo run --example ragchat --features grobid
 ```
 
 This writes `.ragrig/references.bib` in the workspace and a GROBID manifest in
-the corpus folder. Renaming is off by default; enable it under **Settings →
-References** if you want the PDFs renamed to `Key - Authors - Title - Year`.
+the corpus folder. `file` fields are relative to the workspace, so the project
+folder can move as a unit; without a workspace the home directory is the base,
+and a PDF on another drive is recorded absolutely. Renaming is off by default;
+enable it under **Settings → References** if you want the PDFs renamed to
+`Key - Authors - Title - Year`.
 
 With `--features grobid`, **Settings → External services** can discover a
 GROBID server on localhost, test a URL, or pull and run
@@ -251,14 +254,10 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 125 library tests (including ten actor tests with a fake
-generator and embedder, context-format and budgeting tests, citation-resolution
-tests, field-level pending-change tests, retrieval enrichment, catalog and
-inline/raster mark checks, agent-bar popover bounds, GPUI number-field typing,
-blur validation and warning bounds, and GPUI hover, selection and
-bulk-clipboard tests), 2 gallery tests, 5 active spike tests plus one ignored
-typing benchmark, and 2 doctests. One GROBID end-to-end test is ignored by
-default:
+Current suite: 154 library tests (three ignored: the GROBID end-to-end test
+and the two Docker-dependent managed-container tests), 2 gallery tests, 5
+active spike tests plus one ignored typing benchmark, and 2 doctests. The
+GROBID end-to-end test runs with:
 
 ```sh
 cargo test --all-features grobid_extracts_the_test_library_end_to_end \
@@ -300,9 +299,11 @@ the link error in CI.
 - GROBID extraction runs on the same worker as chat. It uses
   `grobid-bibtex`'s pre-pass, so unchanged PDFs are cached by a
   `.ragrig_grobid.json` manifest. References merge into
-  `<workspace>/.ragrig/references.bib`; the demo resolves rows' PDFs against
-  the selected corpus. Rename and OpenAlex completion are opt-in because both
-  change files or call the network.
+  `<workspace>/.ragrig/references.bib`; new `file` fields are workspace-relative
+  (home-relative without a workspace, absolute across drives), and the reader
+  accepts absolute, workspace-, bibliography-, and corpus-relative links. The
+  demo resolves rows' PDFs against the selected corpus. Rename and OpenAlex
+  completion are opt-in because both change files or call the network.
 - `@key` resolution is capped at 3 papers per question and 100,000 characters
   per paper, mirroring Scico. Citing the same file through two aliases
   counts both keys as resolved but attaches the document once. Misses never

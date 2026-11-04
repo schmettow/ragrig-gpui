@@ -39,6 +39,7 @@ use gpui_kit::{
 };
 use grobid_bibtex::{
     Collection,
+    bibtex::FileLink,
     cite::{CiteState, Located},
     files::collect_pdfs,
     prepass::{
@@ -321,11 +322,14 @@ pub(crate) struct CitationResolution {
 ///
 /// Mirrors the host-side resolution in Sciscraper: the recorded `file` field
 /// first, then a corpus file named after the key; up to [`MAX_CITATIONS`]
-/// papers, each truncated to [`MAX_CITATION_CHARS`] characters. Misses never
-/// abort the query; they are returned for the transcript note.
+/// papers, each truncated to [`MAX_CITATION_CHARS`] characters. `base` is the
+/// workspace root, which relative `file` fields are resolved against; pass
+/// `None` when the caller has no workspace. Misses never abort the query; they
+/// are returned for the transcript note.
 pub(crate) fn resolve_citations(
     state: &mut CiteState,
     bibliography: &Path,
+    base: Option<&Path>,
     corpora: &[PathBuf],
     keys: &[String],
     parsers: &DocumentParsers,
@@ -345,7 +349,7 @@ pub(crate) fn resolve_citations(
     }
 
     let corpus_paths: Vec<&Path> = corpora.iter().map(PathBuf::as_path).collect();
-    let located = state.locate(keys, Some(bibliography), &corpus_paths);
+    let located = state.locate_with_base(keys, Some(bibliography), base, &corpus_paths);
     let mut attached_paths: HashSet<PathBuf> = HashSet::new();
     for item in located {
         match item {
@@ -499,10 +503,24 @@ impl PrepassObserver for ExtractionObserver<'_> {
     }
 }
 
+/// The directory relative `file` fields are written against.
+///
+/// The workspace root when one is configured; the home directory otherwise, so
+/// a bibliography outside a workspace still stays portable. `None` only when
+/// neither exists, in which case the pre-pass records absolute paths.
+pub(crate) fn link_base(workspace: &Path) -> Option<PathBuf> {
+    if workspace.as_os_str().is_empty() {
+        dirs::home_dir()
+    } else {
+        Some(workspace.to_path_buf())
+    }
+}
+
 /// Run the GROBID pre-pass and return the merged bibliography as UI rows.
 pub(crate) async fn extract(
     folder: &Path,
     bibliography: &Path,
+    base: Option<&Path>,
     options: &ReferenceOptions,
     observer: &mut ExtractionObserver<'_>,
 ) -> Result<(Vec<ReferenceEntry>, ReferenceReport), ExtractionError> {
@@ -512,10 +530,14 @@ pub(crate) async fn extract(
         })?;
     }
 
+    let link = match base {
+        Some(base) => FileLink::Relative(base.to_path_buf()),
+        None => FileLink::Absolute,
+    };
     let mut config = PrepassConfig::new(folder);
     config.bibtex = Some(BibtexTarget {
         path: bibliography.to_path_buf(),
-        link: true,
+        link,
     });
     config.grobid_url.clone_from(&options.grobid_url);
     config.openalex = options.openalex;
@@ -527,12 +549,21 @@ pub(crate) async fn extract(
         Err(PrepassError::Cancelled) => return Err(ExtractionError::Cancelled),
         Err(error) => return Err(ExtractionError::Failed(format!("{error:#}"))),
     };
-    let entries = load_entries(bibliography, folder).map_err(ExtractionError::Failed)?;
+    let entries = load_entries(bibliography, folder, base).map_err(ExtractionError::Failed)?;
     Ok((entries, ReferenceReport::from_prepass(report)))
 }
 
 /// Load reference rows from a merged bibliography.
-pub fn load_entries(bibliography: &Path, folder: &Path) -> Result<Vec<ReferenceEntry>, String> {
+///
+/// `base` resolves relative `file` fields written by an earlier extraction
+/// (normally the workspace root); `folder` is the active corpus, which keeps
+/// hand-written corpus-relative fields working. Absolute fields are used as
+/// recorded.
+pub fn load_entries(
+    bibliography: &Path,
+    folder: &Path,
+    base: Option<&Path>,
+) -> Result<Vec<ReferenceEntry>, String> {
     let collection = match std::fs::read_to_string(bibliography) {
         Ok(source) => Collection::parse(&source).map_err(|error| {
             let (line, key) = bibtex_entry_location(&source, error.span.start);
@@ -593,7 +624,7 @@ pub fn load_entries(bibliography: &Path, folder: &Path) -> Result<Vec<ReferenceE
                     "publisher",
                     "institution",
                 ]),
-                path: resolve_document(&key, file.as_deref(), folder, &pdfs),
+                path: resolve_document(&key, file.as_deref(), bibliography, folder, base, &pdfs),
             }
         })
         .collect();
@@ -612,22 +643,32 @@ pub fn load_entries(bibliography: &Path, folder: &Path) -> Result<Vec<ReferenceE
 fn resolve_document(
     key: &str,
     file: Option<&Path>,
+    bibliography: &Path,
     folder: &Path,
+    base: Option<&Path>,
     pdfs: &[PathBuf],
 ) -> Option<PathBuf> {
     if let Some(file) = file {
-        let candidate = if file.is_absolute() {
-            file.to_path_buf()
+        if file.is_absolute() {
+            if file.is_file() {
+                return Some(file.to_path_buf());
+            }
         } else {
-            folder.join(file)
-        };
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        // The bibliography may have been written from a different working
-        // directory; try the recorded path as-is before falling back.
-        if file.is_file() {
-            return Some(file.to_path_buf());
+            // Workspace-relative links are the pre-pass default. The
+            // bibliography's own directory covers hand-written files, and the
+            // corpus keeps older corpus-relative links working.
+            let mut candidates = Vec::new();
+            if let Some(base) = base {
+                candidates.push(base.join(file));
+            }
+            if let Some(parent) = bibliography.parent() {
+                candidates.push(parent.join(file));
+            }
+            candidates.push(folder.join(file));
+            candidates.push(file.to_path_buf());
+            if let Some(path) = candidates.into_iter().find(|candidate| candidate.is_file()) {
+                return Some(path);
+            }
         }
     }
     let key = key.to_ascii_lowercase();
@@ -1197,7 +1238,7 @@ mod tests {
         let bib = dir.join("references.bib");
         std::fs::write(&bib, SAMPLE.replace("PDF_PATH", &pdf.display().to_string())).expect("bib");
 
-        let entries = load_entries(&bib, &dir).expect("entries");
+        let entries = load_entries(&bib, &dir, None).expect("entries");
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.key, "Kano2025");
@@ -1209,6 +1250,54 @@ mod tests {
         assert_eq!(entry.copy_key_text(), "@Kano2025");
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_workspace_relative_file_field_resolves() {
+        let workspace = temp_dir("read-workspace");
+        let corpus = workspace.join("corpus");
+        let notes = corpus.join("nested");
+        std::fs::create_dir_all(&notes).expect("notes");
+        let pdf = notes.join("paper.md");
+        std::fs::write(&pdf, "# Notes").expect("paper");
+        let bib = workspace.join(".ragrig/references.bib");
+        std::fs::create_dir_all(bib.parent().expect("bib dir")).expect("bib dir");
+        std::fs::write(
+            &bib,
+            "@article{Kano2025,\n  title = {Gaze},\n  file = {corpus/nested/paper.md}\n}\n",
+        )
+        .expect("bib");
+
+        let entries = load_entries(&bib, &corpus, Some(&workspace)).expect("entries");
+        assert_eq!(entries[0].path.as_deref(), Some(pdf.as_path()));
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn a_bibliography_relative_file_field_resolves() {
+        let dir = temp_dir("read-bib-relative");
+        let pdf = dir.join("paper.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4").expect("pdf");
+        let bib = dir.join("references.bib");
+        std::fs::write(
+            &bib,
+            "@article{Kano2025,\n  title = {Gaze},\n  file = {paper.pdf}\n}\n",
+        )
+        .expect("bib");
+
+        let entries = load_entries(&bib, &dir, None).expect("entries");
+        assert_eq!(entries[0].path.as_deref(), Some(pdf.as_path()));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn link_base_prefers_the_workspace_and_falls_back_to_home() {
+        let workspace = temp_dir("base");
+        assert_eq!(link_base(&workspace), Some(workspace.clone()));
+        assert_eq!(link_base(Path::new("")), dirs::home_dir());
+        let _ = std::fs::remove_dir_all(workspace);
     }
 
     #[test]
@@ -1227,7 +1316,7 @@ mod tests {
         )
         .expect("bib");
 
-        let entries = load_entries(&bib, &dir).expect("entries");
+        let entries = load_entries(&bib, &dir, None).expect("entries");
         assert_eq!(entries[0].path.as_deref(), Some(pdf.as_path()));
         assert_eq!(entries[0].year, "2024");
 
@@ -1237,7 +1326,7 @@ mod tests {
     #[test]
     fn a_missing_bibliography_is_empty() {
         let dir = temp_dir("missing");
-        let entries = load_entries(&dir.join("missing.bib"), &dir).expect("entries");
+        let entries = load_entries(&dir.join("missing.bib"), &dir, None).expect("entries");
         assert!(entries.is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -1252,7 +1341,7 @@ mod tests {
         )
         .expect("bib");
 
-        let error = load_entries(&bib, &dir).expect_err("parse error");
+        let error = load_entries(&bib, &dir, None).expect_err("parse error");
         assert!(
             error.contains("at line 5") && error.contains("@Broken"),
             "unexpected error: {error}"
@@ -1297,6 +1386,7 @@ mod tests {
         let resolution = resolve_citations(
             &mut state,
             &bib,
+            None,
             std::slice::from_ref(&corpus),
             &keys,
             &cite_parsers(),
@@ -1311,6 +1401,39 @@ mod tests {
         assert!(resolution.missed[0].contains("Missing2020"));
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn citations_resolve_workspace_relative_links() {
+        let workspace = temp_dir("cite-workspace");
+        let corpus = workspace.join("corpus");
+        std::fs::create_dir_all(&corpus).expect("corpus");
+        let paper = corpus.join("Kano2025.md");
+        std::fs::write(&paper, "WORKSPACE RELATIVE BODY").expect("paper");
+        let bib = workspace.join(".ragrig/references.bib");
+        std::fs::create_dir_all(bib.parent().expect("bib dir")).expect("bib dir");
+        std::fs::write(
+            &bib,
+            "@article{Kano2025, title = {Gaze}, file = {corpus/Kano2025.md}}\n",
+        )
+        .expect("bib");
+
+        let keys = vec!["Kano2025".to_owned()];
+        let mut state = CiteState::default();
+        let resolution = resolve_citations(
+            &mut state,
+            &bib,
+            Some(&workspace),
+            std::slice::from_ref(&corpus),
+            &keys,
+            &cite_parsers(),
+        );
+
+        assert_eq!(resolution.resolved, ["Kano2025"]);
+        assert_eq!(resolution.attached[0].path, paper);
+        assert_eq!(resolution.attachments[0].content, "WORKSPACE RELATIVE BODY");
+
+        let _ = std::fs::remove_dir_all(workspace);
     }
 
     #[test]
@@ -1336,6 +1459,7 @@ mod tests {
         let resolution = resolve_citations(
             &mut state,
             &bib,
+            None,
             std::slice::from_ref(&corpus),
             &keys,
             &cite_parsers(),
@@ -1378,6 +1502,7 @@ mod tests {
         let resolution = resolve_citations(
             &mut state,
             &bib_path,
+            None,
             std::slice::from_ref(&corpus),
             &keys,
             &cite_parsers(),
@@ -1410,6 +1535,7 @@ mod tests {
         let resolution = resolve_citations(
             &mut state,
             &bib,
+            None,
             std::slice::from_ref(&corpus),
             &keys,
             &cite_parsers(),
@@ -1430,6 +1556,7 @@ mod tests {
         let resolution = resolve_citations(
             &mut state,
             &dir.join("missing.bib"),
+            None,
             std::slice::from_ref(&dir),
             &keys,
             &cite_parsers(),
@@ -1766,10 +1893,11 @@ mod tests {
             workers: 4,
         };
         let mut observer = ExtractionObserver::default();
-        let (entries, report) = extract(&corpus, &bibliography, &options, &mut observer)
-            .await
-            .ok()
-            .expect("GROBID extraction");
+        let (entries, report) =
+            extract(&corpus, &bibliography, Some(&dir), &options, &mut observer)
+                .await
+                .ok()
+                .expect("GROBID extraction");
 
         assert_eq!(entries.len(), copied);
         assert_eq!(report.merged, copied);
@@ -1789,6 +1917,7 @@ mod tests {
         let resolution = resolve_citations(
             &mut state,
             &bibliography,
+            Some(&dir),
             std::slice::from_ref(&corpus),
             &keys,
             &parsers,

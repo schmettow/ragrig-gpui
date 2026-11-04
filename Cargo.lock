@@ -3760,9 +3760,7 @@ dependencies = [
 
 [[package]]
 name = "grobid-bibtex"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80b024603fd6b702aeaa34a05dbcd67474017177149ea3bd5f3d858a520f8c07"
+version = "0.4.0"
 dependencies = [
  "biblatex",
  "grobid",
@@ -6552,7 +6550,7 @@ dependencies = [
 
 [[package]]
 name = "ragrig-gpui"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-channel",

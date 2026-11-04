@@ -27,3 +27,6 @@ rustc-ice-*.txt
 .ragrig/
 .ragrig_store
 .ragrig_grobid.json
+test_library/Kano_2025_Holding_a_Steady_Look_at_the_Human_Eye_Rebuttal_to.pdf
+test_library/Kozmik_2005_Pax_genes_in_eye_development_and_evolution.pdf
+test_library/Kobayashi_2011_The_gaze_that_grooms_contribution_of_social_factors_to_the.pdf
