@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **First-run setup guide.** A new `onboarding_page` walks a host through the
+  local embedding model and its Ollama source, the chat provider and model with
+  API-key guidance, context and answer limits suggested from the selected
+  model, retrieval top-k and similarity threshold, optional GROBID, and a
+  review. `RagOnboarding` holds the step state and the pre-guide snapshot so a
+  host can restore it when the user skips; `workspace_has_history` and
+  `mark_workspace_setup_done` implement the per-workspace setup marker.
 - **Managed Ollama and llama.cpp containers.** **Settings → External services**
   now manages all three services through one `ExternalServices` controller.
   Each service has a source (**Existing server**, **Existing container**, or
@@ -94,13 +101,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 `cargo fmt --check`, `cargo check --all-targets --all-features`, `cargo test
 --all-features`, and `cargo clippy --all-targets --all-features -- -D warnings`
-are green. Tests: 187 unit tests passed (4 Docker-dependent tests ignored),
+are green. Tests: 195 unit tests passed (4 Docker-dependent tests ignored),
 2 gallery tests, 5 spike tests passed (1 ignored), and 2 doctests —
-**196 passed, 0 failed, 5 ignored**. New coverage exercises URL normalization,
+**204 passed, 0 failed, 5 ignored**. New coverage exercises URL normalization,
 container bodies and ports for all three services, named volumes, llama.cpp
 command construction, Ollama model selection, the Docker error classifier, a
 per-field profile round-trip, host-state preservation across layers and profile
-loads, and container-command source selection.
+loads, container-command source selection, onboarding step navigation and
+restart/skip, model-aware token suggestions, and workspace-history detection.
 
 ## v0.7.1 — 2026-11-04
 

@@ -127,7 +127,10 @@ fn uses_docker_source(settings: &Entity<RagSettings>, cx: &App) -> bool {
     })
 }
 
-fn docker_group(settings: Entity<RagSettings>, service: Entity<ExternalServices>) -> SettingGroup {
+pub(crate) fn docker_group(
+    settings: Entity<RagSettings>,
+    service: Entity<ExternalServices>,
+) -> SettingGroup {
     let status_service = service.clone();
     let status = SettingItem::render(move |_, _, cx| {
         let status = status_service.read(cx).docker();
@@ -173,125 +176,157 @@ fn docker_group(settings: Entity<RagSettings>, service: Entity<ExternalServices>
 }
 
 #[cfg(feature = "grobid")]
-fn grobid_group(
+pub(crate) fn grobid_group(
     settings: Entity<RagSettings>,
     service: Entity<ExternalServices>,
     changes: Changes,
     cx: &App,
 ) -> SettingGroup {
-    let kind = ServiceKind::Grobid;
-    let source = source_row(&settings, &service, &changes, kind);
-    let mut group = SettingGroup::new()
+    SettingGroup::new()
         .title("GROBID")
         .description("Parses PDF headers and merges the result into the bibliography.")
-        .item(source.into_item());
-
-    if source_value(&settings, kind, cx) == ServiceSource::Existing {
-        group = group
-            .item(grobid_url_row(&settings, &service, &changes).into_item())
-            .item(status_item(&settings, &service, kind));
-    } else if source_value(&settings, kind, cx) == ServiceSource::ExistingContainer {
-        group = group
-            .item(container_name_row(&settings, &changes, kind))
-            .item(auto_start_row(&settings, &changes, kind))
-            .item(grobid_url_row(&settings, &service, &changes).into_item())
-            .item(actions_item(&settings, &service, kind))
-            .item(status_item(&settings, &service, kind));
-    } else {
-        group = group
-            .item(auto_start_row(&settings, &changes, kind))
-            .item(image_row(&settings, &changes, kind).into_item())
-            .item(actions_item(&settings, &service, kind))
-            .item(status_item(&settings, &service, kind));
-    }
-    group.footer(|_, cx| {
-        div()
-            .text_xs()
-            .text_color(cx.theme().muted_foreground)
-            .child("The app stops the container when it quits. Removing the container leaves the image on disk.")
-    })
+        .items(service_items(
+            ServiceKind::Grobid,
+            &settings,
+            &service,
+            &changes,
+            cx,
+        ))
+        .footer(|_, cx| {
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("The app stops the container when it quits. Removing the container leaves the image on disk.")
+        })
 }
 
-fn ollama_group(
+pub(crate) fn ollama_group(
     settings: Entity<RagSettings>,
     service: Entity<ExternalServices>,
     changes: Changes,
     cx: &App,
 ) -> SettingGroup {
-    let kind = ServiceKind::Ollama;
-    let source = source_row(&settings, &service, &changes, kind);
-    let mut group = SettingGroup::new()
+    SettingGroup::new()
         .title("Ollama")
         .description(
             "Serves local chat and embedding models at localhost:11434. The managed container keeps its models in the ragrig-ollama-models volume.",
         )
-        .item(source.into_item());
-
-    if source_value(&settings, kind, cx) == ServiceSource::Existing {
-        group = group
-            .item(probe_actions_item(&service, kind))
-            .item(status_item(&settings, &service, kind));
-    } else if source_value(&settings, kind, cx) == ServiceSource::ExistingContainer {
-        group = group
-            .item(container_name_row(&settings, &changes, kind))
-            .item(auto_start_row(&settings, &changes, kind))
-            .item(actions_item(&settings, &service, kind))
-            .item(status_item(&settings, &service, kind));
-    } else {
-        group = group
-            .item(auto_start_row(&settings, &changes, kind))
-            .item(image_row(&settings, &changes, kind).into_item())
-            .item(actions_item(&settings, &service, kind))
-            .item(status_item(&settings, &service, kind));
-    }
-    group.footer(|_, cx| {
-        div()
-            .text_xs()
-            .text_color(cx.theme().muted_foreground)
-            .child("Models are pulled on demand with Pull models; they survive container removal because the volume stays. If a server already answers on port 11434, the app uses it instead of starting a container. The app stops the container when it quits.")
-    })
+        .items(service_items(
+            ServiceKind::Ollama,
+            &settings,
+            &service,
+            &changes,
+            cx,
+        ))
+        .footer(|_, cx| {
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Models are pulled on demand with Pull models; they survive container removal because the volume stays. If a server already answers on port 11434, the app uses it instead of starting a container. The app stops the container when it quits.")
+        })
 }
 
-fn llamacpp_group(
+pub(crate) fn llamacpp_group(
     settings: Entity<RagSettings>,
     service: Entity<ExternalServices>,
     changes: Changes,
     cx: &App,
 ) -> SettingGroup {
-    let kind = ServiceKind::LlamaCpp;
-    let source = source_row(&settings, &service, &changes, kind);
-    let mut group = SettingGroup::new()
+    SettingGroup::new()
         .title("llama.cpp")
         .description(
             "Serves one GGUF model through an OpenAI-compatible API. The chat URL lives in RAG → Chat.",
         )
-        .item(source.into_item());
+        .items(service_items(
+            ServiceKind::LlamaCpp,
+            &settings,
+            &service,
+            &changes,
+            cx,
+        ))
+        .footer(|_, cx| {
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("A Hugging Face repository is downloaded into the ragrig-llamacpp-models volume. An absolute .gguf path is mounted read-only from the host. If a server already answers on port 8080, the app uses it instead of starting a container. The app stops the container when it quits.")
+        })
+}
 
-    if source_value(&settings, kind, cx) == ServiceSource::Existing {
-        group = group
-            .item(probe_actions_item(&service, kind))
-            .item(status_item(&settings, &service, kind));
-    } else if source_value(&settings, kind, cx) == ServiceSource::ExistingContainer {
-        group = group
-            .item(container_name_row(&settings, &changes, kind))
-            .item(auto_start_row(&settings, &changes, kind))
-            .item(actions_item(&settings, &service, kind))
-            .item(status_item(&settings, &service, kind));
-    } else {
-        group = group
-            .item(auto_start_row(&settings, &changes, kind))
-            .item(image_row(&settings, &changes, kind).into_item())
-            .item(llamacpp_model_row(&settings, &changes).into_item())
-            .item(llamacpp_args_row(&settings, &changes).into_item())
-            .item(actions_item(&settings, &service, kind))
-            .item(status_item(&settings, &service, kind));
+/// The source-dependent rows shared by every service group.
+///
+/// The onboarding page reuses these groups, so the wizard and the settings page
+/// cannot drift apart.
+pub(crate) fn service_items(
+    kind: ServiceKind,
+    settings: &Entity<RagSettings>,
+    service: &Entity<ExternalServices>,
+    changes: &Changes,
+    cx: &App,
+) -> Vec<SettingItem> {
+    let source = source_value(settings, kind, cx);
+    let mut items = vec![source_row(settings, service, changes, kind).into_item()];
+    match kind {
+        ServiceKind::Grobid => match source {
+            ServiceSource::Existing => {
+                #[cfg(feature = "grobid")]
+                items.push(grobid_url_row(settings, service, changes).into_item());
+                items.push(status_item(settings, service, kind));
+            }
+            ServiceSource::ExistingContainer => {
+                items.push(container_name_row(settings, changes, kind));
+                items.push(auto_start_row(settings, changes, kind));
+                #[cfg(feature = "grobid")]
+                items.push(grobid_url_row(settings, service, changes).into_item());
+                items.push(actions_item(settings, service, kind));
+                items.push(status_item(settings, service, kind));
+            }
+            ServiceSource::Managed => {
+                items.push(auto_start_row(settings, changes, kind));
+                items.push(image_row(settings, changes, kind).into_item());
+                items.push(actions_item(settings, service, kind));
+                items.push(status_item(settings, service, kind));
+            }
+        },
+        ServiceKind::Ollama => match source {
+            ServiceSource::Existing => {
+                items.push(probe_actions_item(service, kind));
+                items.push(status_item(settings, service, kind));
+            }
+            ServiceSource::ExistingContainer => {
+                items.push(container_name_row(settings, changes, kind));
+                items.push(auto_start_row(settings, changes, kind));
+                items.push(actions_item(settings, service, kind));
+                items.push(status_item(settings, service, kind));
+            }
+            ServiceSource::Managed => {
+                items.push(auto_start_row(settings, changes, kind));
+                items.push(image_row(settings, changes, kind).into_item());
+                items.push(actions_item(settings, service, kind));
+                items.push(status_item(settings, service, kind));
+            }
+        },
+        ServiceKind::LlamaCpp => match source {
+            ServiceSource::Existing => {
+                items.push(probe_actions_item(service, kind));
+                items.push(status_item(settings, service, kind));
+            }
+            ServiceSource::ExistingContainer => {
+                items.push(container_name_row(settings, changes, kind));
+                items.push(auto_start_row(settings, changes, kind));
+                items.push(actions_item(settings, service, kind));
+                items.push(status_item(settings, service, kind));
+            }
+            ServiceSource::Managed => {
+                items.push(auto_start_row(settings, changes, kind));
+                items.push(image_row(settings, changes, kind).into_item());
+                items.push(llamacpp_model_row(settings, changes).into_item());
+                items.push(llamacpp_args_row(settings, changes).into_item());
+                items.push(actions_item(settings, service, kind));
+                items.push(status_item(settings, service, kind));
+            }
+        },
     }
-    group.footer(|_, cx| {
-        div()
-            .text_xs()
-            .text_color(cx.theme().muted_foreground)
-            .child("A Hugging Face repository is downloaded into the ragrig-llamacpp-models volume. An absolute .gguf path is mounted read-only from the host. If a server already answers on port 8080, the app uses it instead of starting a container. The app stops the container when it quits.")
-    })
+    items
 }
 
 fn source_value(settings: &Entity<RagSettings>, kind: ServiceKind, cx: &App) -> ServiceSource {

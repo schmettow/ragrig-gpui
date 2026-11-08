@@ -268,6 +268,14 @@ ragrig-gpui
   `path_setting`,
   `token_slider`, `SettingRow`, `dirty_color`, and `dirty_header` are exported
   for hosts that need the same pickers, 2^x token controls, or unsaved marks.
+- **First-run setup guide.** `onboarding_page(onboarding, settings, services,
+  actions, cx)` walks through a local embedding model and its Ollama source,
+  the chat provider/model with API-key guidance, model-aware context and answer
+  limits, retrieval top-k/threshold, optional GROBID, and a review. `RagOnboarding`
+  owns the step state and the pre-guide snapshot.
+  `workspace_has_history`/`mark_workspace_setup_done` detect a workspace with no
+  Ragrig or Scico data, and `token_suggestion` maps local parameter counts and
+  frontier providers to sensible limits.
 - `RagSettings::dirty_since(&applied)` returns a `RagChanges` set of
   `RagField`s; `RagSection` groups them for page and section indicators.
   `RagSettings::reset_to_profile_defaults()` reloads the selected profile (or
@@ -290,7 +298,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 187 library tests (four ignored: the GROBID end-to-end
+Current suite: 195 library tests (four ignored: the GROBID end-to-end
 test and the three Docker-dependent managed-container tests), 2 gallery tests,
 5 active spike tests plus one ignored typing benchmark, and 2 doctests. The
 GROBID end-to-end test runs with:

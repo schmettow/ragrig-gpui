@@ -16,6 +16,8 @@ mod attach;
 mod chat;
 mod config;
 mod controller;
+#[cfg(feature = "managed")]
+mod onboarding;
 mod protocol;
 mod settings_page;
 
@@ -28,6 +30,12 @@ pub use config::{
     RagSettings, RagSetup, ServiceSource,
 };
 pub use controller::RagController;
+#[cfg(feature = "managed")]
+pub use onboarding::{
+    OnboardingAction, OnboardingActions, OnboardingStep, RagOnboarding, SETUP_MARKER,
+    TokenSuggestion, mark_workspace_setup_done, onboarding_page, token_suggestion,
+    workspace_has_history,
+};
 pub use protocol::{
     AgentInfo, AttachmentSource, IngestPhase, IngestProgress, LibraryDocument, LibrarySnapshot,
     PendingAttachment, RagCommand, RagEvent, RagReply, RequestId, SessionInfo, SessionTurn,

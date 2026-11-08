@@ -17,6 +17,9 @@ pub use managed::{
     GrobidServiceEvent,
 };
 pub use settings_page::external_services_page;
+#[cfg(feature = "grobid")]
+pub(crate) use settings_page::grobid_group;
+pub(crate) use settings_page::{docker_group, llamacpp_group, ollama_group};
 pub use spec::{
     GROBID_DISCOVERY_PORTS, LLAMACPP_DISCOVERY_PORTS, MANAGED_GROBID_CONTAINER,
     MANAGED_GROBID_PORT, MANAGED_GROBID_URL, MANAGED_LLAMACPP_CONTAINER, MANAGED_LLAMACPP_PORT,
