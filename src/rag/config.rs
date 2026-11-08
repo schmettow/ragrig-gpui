@@ -25,6 +25,15 @@ pub const DEFAULT_OLLAMA_IMAGE: &str = "ollama/ollama:latest";
 /// The default managed llama.cpp server image.
 pub const DEFAULT_LLAMACPP_IMAGE: &str = "ghcr.io/ggml-org/llama.cpp:server";
 
+/// The container name Scico creates when it manages GROBID itself.
+pub const DEFAULT_GROBID_CONTAINER: &str = "ragrig-grobid";
+
+/// The container name Scico creates when it manages Ollama itself.
+pub const DEFAULT_OLLAMA_CONTAINER: &str = "ragrig-ollama";
+
+/// The container name Scico creates when it manages llama.cpp itself.
+pub const DEFAULT_LLAMACPP_CONTAINER: &str = "ragrig-llamacpp";
+
 /// Chat backend offered by the settings page.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ChatProvider {
@@ -224,6 +233,8 @@ pub enum ServiceSource {
     /// Use a server that is already running (local or remote).
     #[default]
     Existing,
+    /// Start and stop a container the user created by name.
+    ExistingContainer,
     /// Let the app pull and run the official Docker image.
     Managed,
 }
@@ -236,6 +247,7 @@ impl ServiceSource {
     pub fn label(self) -> &'static str {
         match self {
             Self::Existing => "Existing server",
+            Self::ExistingContainer => "Existing container",
             Self::Managed => "Docker container",
         }
     }
@@ -244,6 +256,7 @@ impl ServiceSource {
     pub fn options() -> &'static [(Self, &'static str)] {
         &[
             (Self::Existing, "Existing server"),
+            (Self::ExistingContainer, "Existing container"),
             (Self::Managed, "Docker container"),
         ]
     }
@@ -420,16 +433,22 @@ pub struct RagSettings {
     pub grobid_image: String,
     /// Start the managed GROBID container when the app opens.
     pub grobid_auto_start: bool,
+    /// Container name used for GROBID when the source is an existing container.
+    pub grobid_container: String,
     /// Where the Ollama server comes from.
     pub ollama_source: ServiceSource,
     /// Docker image used when [`Self::ollama_source`] is [`ServiceSource::Managed`].
     pub ollama_image: String,
     /// Start the managed Ollama container when the app opens.
     pub ollama_auto_start: bool,
+    /// Container name used for Ollama when the source is an existing container.
+    pub ollama_container: String,
     /// Where the llama.cpp server comes from.
     pub llamacpp_source: ServiceSource,
     /// Docker image used when [`Self::llamacpp_source`] is [`ServiceSource::Managed`].
     pub llamacpp_image: String,
+    /// Container name used for llama.cpp when the source is an existing container.
+    pub llamacpp_container: String,
     /// Model the managed llama.cpp container loads.
     ///
     /// A Hugging Face repository (`owner/repo[:quant]`) is downloaded by
@@ -521,16 +540,22 @@ pub enum RagField {
     GrobidImage,
     /// Start the managed GROBID container when the app opens.
     GrobidAutoStart,
+    /// Container name for an existing GROBID container.
+    GrobidContainer,
     /// Where the Ollama server comes from.
     OllamaSource,
     /// Docker image for the managed Ollama container.
     OllamaImage,
     /// Start the managed Ollama container when the app opens.
     OllamaAutoStart,
+    /// Container name for an existing Ollama container.
+    OllamaContainer,
     /// Where the llama.cpp server comes from.
     LlamaCppSource,
     /// Docker image for the managed llama.cpp container.
     LlamaCppImage,
+    /// Container name for an existing llama.cpp container.
+    LlamaCppContainer,
     /// Model loaded by the managed llama.cpp container.
     LlamaCppModel,
     /// Extra arguments for the managed llama.cpp container.
@@ -571,11 +596,14 @@ impl RagField {
             | Self::GrobidUrl
             | Self::GrobidImage
             | Self::GrobidAutoStart
+            | Self::GrobidContainer
             | Self::OllamaSource
             | Self::OllamaImage
             | Self::OllamaAutoStart
+            | Self::OllamaContainer
             | Self::LlamaCppSource
             | Self::LlamaCppImage
+            | Self::LlamaCppContainer
             | Self::LlamaCppModel
             | Self::LlamaCppArgs
             | Self::LlamaCppAutoStart => RagSection::Services,
@@ -803,6 +831,10 @@ impl RagSettings {
             RagField::GrobidAutoStart,
         );
         changes.mark_if(
+            self.grobid_container != applied.grobid_container,
+            RagField::GrobidContainer,
+        );
+        changes.mark_if(
             self.ollama_source != applied.ollama_source,
             RagField::OllamaSource,
         );
@@ -815,12 +847,20 @@ impl RagSettings {
             RagField::OllamaAutoStart,
         );
         changes.mark_if(
+            self.ollama_container != applied.ollama_container,
+            RagField::OllamaContainer,
+        );
+        changes.mark_if(
             self.llamacpp_source != applied.llamacpp_source,
             RagField::LlamaCppSource,
         );
         changes.mark_if(
             self.llamacpp_image != applied.llamacpp_image,
             RagField::LlamaCppImage,
+        );
+        changes.mark_if(
+            self.llamacpp_container != applied.llamacpp_container,
+            RagField::LlamaCppContainer,
         );
         changes.mark_if(
             self.llamacpp_model != applied.llamacpp_model,
@@ -864,11 +904,14 @@ impl RagSettings {
         let grobid_url = self.grobid_url.clone();
         let grobid_image = self.grobid_image.clone();
         let grobid_auto_start = self.grobid_auto_start;
+        let grobid_container = self.grobid_container.clone();
         let ollama_source = self.ollama_source;
         let ollama_image = self.ollama_image.clone();
         let ollama_auto_start = self.ollama_auto_start;
+        let ollama_container = self.ollama_container.clone();
         let llamacpp_source = self.llamacpp_source;
         let llamacpp_image = self.llamacpp_image.clone();
+        let llamacpp_container = self.llamacpp_container.clone();
         let llamacpp_model = self.llamacpp_model.clone();
         let llamacpp_args = self.llamacpp_args.clone();
         let llamacpp_auto_start = self.llamacpp_auto_start;
@@ -879,11 +922,14 @@ impl RagSettings {
             grobid_url,
             grobid_image,
             grobid_auto_start,
+            grobid_container,
             ollama_source,
             ollama_image,
             ollama_auto_start,
+            ollama_container,
             llamacpp_source,
             llamacpp_image,
+            llamacpp_container,
             llamacpp_model,
             llamacpp_args,
             llamacpp_auto_start,
@@ -990,11 +1036,14 @@ impl RagSettings {
             grobid_url: DEFAULT_GROBID_URL.to_owned(),
             grobid_image: DEFAULT_GROBID_IMAGE.to_owned(),
             grobid_auto_start: false,
+            grobid_container: DEFAULT_GROBID_CONTAINER.to_owned(),
             ollama_source: ServiceSource::Existing,
             ollama_image: DEFAULT_OLLAMA_IMAGE.to_owned(),
             ollama_auto_start: false,
+            ollama_container: DEFAULT_OLLAMA_CONTAINER.to_owned(),
             llamacpp_source: ServiceSource::Existing,
             llamacpp_image: DEFAULT_LLAMACPP_IMAGE.to_owned(),
+            llamacpp_container: DEFAULT_LLAMACPP_CONTAINER.to_owned(),
             llamacpp_model: String::new(),
             llamacpp_args: String::new(),
             llamacpp_auto_start: false,
@@ -1271,8 +1320,18 @@ impl RagSettings {
         if self.grobid_source == GrobidSource::Managed && self.grobid_image.trim().is_empty() {
             return Err("enter the Docker image for the managed GROBID container".to_owned());
         }
+        if self.grobid_source == ServiceSource::ExistingContainer
+            && self.grobid_container.trim().is_empty()
+        {
+            return Err("enter the GROBID container name".to_owned());
+        }
         if self.ollama_source == ServiceSource::Managed && self.ollama_image.trim().is_empty() {
             return Err("enter the Docker image for the managed Ollama container".to_owned());
+        }
+        if self.ollama_source == ServiceSource::ExistingContainer
+            && self.ollama_container.trim().is_empty()
+        {
+            return Err("enter the Ollama container name".to_owned());
         }
         if self.llamacpp_source == ServiceSource::Managed {
             if self.llamacpp_image.trim().is_empty() {
@@ -1284,6 +1343,11 @@ impl RagSettings {
                         .to_owned(),
                 );
             }
+        }
+        if self.llamacpp_source == ServiceSource::ExistingContainer
+            && self.llamacpp_container.trim().is_empty()
+        {
+            return Err("enter the llama.cpp container name".to_owned());
         }
         for entry in &self.corpus_dirs {
             let entry = entry.trim();
@@ -1391,11 +1455,14 @@ impl RagSettings {
         let grobid_url = self.grobid_url.clone();
         let grobid_image = self.grobid_image.clone();
         let grobid_auto_start = self.grobid_auto_start;
+        let grobid_container = self.grobid_container.clone();
         let ollama_source = self.ollama_source;
         let ollama_image = self.ollama_image.clone();
         let ollama_auto_start = self.ollama_auto_start;
+        let ollama_container = self.ollama_container.clone();
         let llamacpp_source = self.llamacpp_source;
         let llamacpp_image = self.llamacpp_image.clone();
+        let llamacpp_container = self.llamacpp_container.clone();
         let llamacpp_model = self.llamacpp_model.clone();
         let llamacpp_args = self.llamacpp_args.clone();
         let llamacpp_auto_start = self.llamacpp_auto_start;
@@ -1405,11 +1472,14 @@ impl RagSettings {
         loaded.grobid_url = grobid_url;
         loaded.grobid_image = grobid_image;
         loaded.grobid_auto_start = grobid_auto_start;
+        loaded.grobid_container = grobid_container;
         loaded.ollama_source = ollama_source;
         loaded.ollama_image = ollama_image;
         loaded.ollama_auto_start = ollama_auto_start;
+        loaded.ollama_container = ollama_container;
         loaded.llamacpp_source = llamacpp_source;
         loaded.llamacpp_image = llamacpp_image;
+        loaded.llamacpp_container = llamacpp_container;
         loaded.llamacpp_model = llamacpp_model;
         loaded.llamacpp_args = llamacpp_args;
         loaded.llamacpp_auto_start = llamacpp_auto_start;
@@ -1978,6 +2048,10 @@ mod tests {
         assert_eq!(settings.grobid_source, GrobidSource::Existing);
         assert_eq!(settings.grobid_url, DEFAULT_GROBID_URL.to_owned());
         assert_eq!(settings.grobid_image, DEFAULT_GROBID_IMAGE.to_owned());
+        assert_eq!(
+            settings.grobid_container,
+            DEFAULT_GROBID_CONTAINER.to_owned()
+        );
         assert!(!settings.grobid_auto_start);
         assert_eq!(
             GrobidSource::from_label("Docker container"),
@@ -1991,12 +2065,36 @@ mod tests {
         let settings = RagSettings::default();
         assert_eq!(settings.ollama_source, ServiceSource::Existing);
         assert_eq!(settings.ollama_image, DEFAULT_OLLAMA_IMAGE.to_owned());
+        assert_eq!(
+            settings.ollama_container,
+            DEFAULT_OLLAMA_CONTAINER.to_owned()
+        );
         assert!(!settings.ollama_auto_start);
         assert_eq!(settings.llamacpp_source, ServiceSource::Existing);
         assert_eq!(settings.llamacpp_image, DEFAULT_LLAMACPP_IMAGE.to_owned());
+        assert_eq!(
+            settings.llamacpp_container,
+            DEFAULT_LLAMACPP_CONTAINER.to_owned()
+        );
         assert!(settings.llamacpp_model.is_empty());
         assert!(settings.llamacpp_args.is_empty());
         assert!(!settings.llamacpp_auto_start);
+    }
+
+    #[test]
+    fn an_existing_container_source_requires_a_container_name() {
+        let mut settings = RagSettings {
+            ollama_source: ServiceSource::ExistingContainer,
+            ollama_container: "   ".to_owned(),
+            ..RagSettings::default()
+        };
+        assert!(settings.validate().is_err());
+        settings.ollama_container = "ollama-sycl".to_owned();
+        assert!(settings.validate().is_ok());
+        assert_eq!(
+            ServiceSource::from_label("Existing container"),
+            Some(ServiceSource::ExistingContainer)
+        );
     }
 
     #[test]
@@ -2110,6 +2208,9 @@ mod tests {
             (RagField::GrobidAutoStart, |settings| {
                 settings.grobid_auto_start = !settings.grobid_auto_start
             }),
+            (RagField::GrobidContainer, |settings| {
+                settings.grobid_container.push_str("-custom")
+            }),
             (RagField::OllamaSource, |settings| {
                 settings.ollama_source = ServiceSource::Managed
             }),
@@ -2119,11 +2220,17 @@ mod tests {
             (RagField::OllamaAutoStart, |settings| {
                 settings.ollama_auto_start = !settings.ollama_auto_start
             }),
+            (RagField::OllamaContainer, |settings| {
+                settings.ollama_container.push_str("-custom")
+            }),
             (RagField::LlamaCppSource, |settings| {
                 settings.llamacpp_source = ServiceSource::Managed
             }),
             (RagField::LlamaCppImage, |settings| {
                 settings.llamacpp_image.push_str("-cuda")
+            }),
+            (RagField::LlamaCppContainer, |settings| {
+                settings.llamacpp_container.push_str("-custom")
             }),
             (RagField::LlamaCppModel, |settings| {
                 settings.llamacpp_model = "owner/model:Q4_K_M".to_owned()

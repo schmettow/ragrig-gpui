@@ -22,8 +22,9 @@ pub use crate::{
 
 #[cfg(feature = "ragrig")]
 pub use crate::rag::{
-    AgentInfo, AttachmentSource, Changes, ChatProvider, DEFAULT_GROBID_IMAGE, DEFAULT_GROBID_URL,
-    DEFAULT_LLAMACPP_IMAGE, DEFAULT_OLLAMA_IMAGE, ExportPrompt, GrobidSource, IngestPhase,
+    AgentInfo, AttachmentSource, Changes, ChatProvider, DEFAULT_GROBID_CONTAINER,
+    DEFAULT_GROBID_IMAGE, DEFAULT_GROBID_URL, DEFAULT_LLAMACPP_CONTAINER, DEFAULT_LLAMACPP_IMAGE,
+    DEFAULT_OLLAMA_CONTAINER, DEFAULT_OLLAMA_IMAGE, ExportPrompt, GrobidSource, IngestPhase,
     IngestProgress, LibraryDocument, LibrarySnapshot, MemoryChoice, OpenPrompt, PdfBackend,
     PendingAttachment, PromptActions, RagChanges, RagChat, RagChatEvent, RagCommand, RagController,
     RagEvent, RagField, RagReply, RagSection, RagSettings, RagSetup, RequestId, ScicoAttach,

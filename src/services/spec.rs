@@ -15,7 +15,7 @@ use reqwest::Client;
 use crate::rag::{ChatProvider, RagSettings};
 
 /// Name of the managed GROBID container.
-pub const MANAGED_GROBID_CONTAINER: &str = "ragrig-grobid";
+pub const MANAGED_GROBID_CONTAINER: &str = crate::rag::DEFAULT_GROBID_CONTAINER;
 /// Loopback URL exposed by the managed GROBID container.
 pub const MANAGED_GROBID_URL: &str = "http://127.0.0.1:8070";
 /// Host port exposed by the managed GROBID container.
@@ -24,7 +24,7 @@ pub const MANAGED_GROBID_PORT: u16 = 8070;
 pub const GROBID_DISCOVERY_PORTS: [u16; 2] = [8070, 8080];
 
 /// Name of the managed Ollama container.
-pub const MANAGED_OLLAMA_CONTAINER: &str = "ragrig-ollama";
+pub const MANAGED_OLLAMA_CONTAINER: &str = crate::rag::DEFAULT_OLLAMA_CONTAINER;
 /// Loopback URL exposed by the managed Ollama container.
 pub const MANAGED_OLLAMA_URL: &str = "http://localhost:11434";
 /// Host port exposed by the managed Ollama container.
@@ -33,7 +33,7 @@ pub const MANAGED_OLLAMA_PORT: u16 = 11434;
 pub const OLLAMA_DISCOVERY_PORTS: [u16; 1] = [11434];
 
 /// Name of the managed llama.cpp container.
-pub const MANAGED_LLAMACPP_CONTAINER: &str = "ragrig-llamacpp";
+pub const MANAGED_LLAMACPP_CONTAINER: &str = crate::rag::DEFAULT_LLAMACPP_CONTAINER;
 /// OpenAI-compatible URL exposed by the managed llama.cpp container.
 pub const MANAGED_LLAMACPP_URL: &str = "http://127.0.0.1:8080/v1";
 /// Host port exposed by the managed llama.cpp container.

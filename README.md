@@ -67,8 +67,8 @@ enable it under **Settings → References** if you want the PDFs renamed to
 With `--features managed` (included by `grobid`), **Settings → External
 services** manages three local services: GROBID for reference extraction,
 Ollama for chat and embeddings, and a llama.cpp `llama-server`. Each service
-can use a server that is already running or pull and run an official Docker
-image:
+can use a server that is already running, start and stop a container you created
+yourself by name, or pull and run an official Docker image:
 
 | Service | Existing server | Managed container | Port |
 | --- | --- | --- | --- |
@@ -76,15 +76,22 @@ image:
 | Ollama | `localhost:11434` | `ollama/ollama:latest` | `127.0.0.1:11434` |
 | llama.cpp | the URL from **RAG → Chat** | `ghcr.io/ggml-org/llama.cpp:server` | `127.0.0.1:8080` |
 
-**Auto start** starts a managed container whenever the service entity is
-created. Managed containers run on CPU; use an existing server when you need
-GPU acceleration. Managed Ollama keeps its models in the
+**Existing container** is for a hand-configured container: enter its Docker
+name, and Scico starts and stops it without creating, recreating, or removing
+it. It is left running when the app quits. This is the right source for a
+container with custom devices, runtimes, users, or volumes (for example an
+Intel SYCL Ollama). The **Container name** field belongs to this source only;
+managed containers keep the `ragrig-*` names.
+
+**Auto start** starts a managed or existing container whenever the service
+entity is created. Managed containers run on CPU; use an existing server when
+you need GPU acceleration. Managed Ollama keeps its models in the
 `ragrig-ollama-models` volume; **Pull models** fetches the configured chat,
 embedding, and memory models through the Ollama API. Managed llama.cpp accepts
 a Hugging Face repository (`owner/repo[:quant]`) or an absolute `.gguf` path and
-keeps Hugging Face downloads in `ragrig-llamacpp-models`. Containers are
-recreated when their image or llama.cpp model changes, and are stopped when the
-service entity drops.
+keeps Hugging Face downloads in `ragrig-llamacpp-models`. Managed containers are
+recreated when their image or llama.cpp model changes and are stopped when the
+service entity drops; existing containers are left running.
 
 Docker problems are reported in the page: a stopped daemon gets a start hint,
 and a user without socket access gets the `usermod -aG docker` remediation.
@@ -276,8 +283,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 176 library tests (three ignored: the GROBID end-to-end
-test and the two Docker-dependent managed-container tests), 2 gallery tests,
+Current suite: 177 library tests (four ignored: the GROBID end-to-end
+test and the three Docker-dependent managed-container tests), 2 gallery tests,
 5 active spike tests plus one ignored typing benchmark, and 2 doctests. The
 GROBID end-to-end test runs with:
 
@@ -296,7 +303,16 @@ cargo test --all-features an_existing_ollama_is_adopted_without_a_container \
 ```
 
 The adoption test needs a server on `http://localhost:11434`; the container
-test skips when the port is already in use.
+test skips when the port is already in use. A hand-configured container can be
+started and stopped by name with:
+
+```sh
+RAGRIG_OLLAMA_CONTAINER_TEST=ollama-sycl \
+  cargo test --all-features an_existing_container_is_started_by_name \
+  -- --ignored --nocapture
+```
+
+It restores the container's previous running state.
 
 It copies the PDFs from `test_library/` to a temporary corpus, parses them
 with the running GROBID server, renames them, merges the bibliography, checks

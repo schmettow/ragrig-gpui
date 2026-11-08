@@ -11,11 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Managed Ollama and llama.cpp containers.** **Settings → External services**
   now manages all three services through one `ExternalServices` controller.
-  Each service has a source (**Existing server** or **Docker container**), a
-  Docker image, an **Auto start** switch, pull/start progress with cancellation,
-  **Stop**, **Remove container**, and **Refresh**. Defaults are
-  `ollama/ollama:latest` on `127.0.0.1:11434` and
+  Each service has a source (**Existing server**, **Existing container**, or
+  **Docker container**), a Docker image, an **Auto start** switch, pull/start
+  progress with cancellation, **Stop**, **Remove container**, and **Refresh**.
+  Defaults are `ollama/ollama:latest` on `127.0.0.1:11434` and
   `ghcr.io/ggml-org/llama.cpp:server` on `127.0.0.1:8080`.
+- **Existing container source.** A hand-configured container can be started and
+  stopped by name without creating, recreating, or removing it. Scico leaves it
+  running when the app quits. This supports containers with custom devices,
+  runtimes, users, or volumes (for example an Intel SYCL Ollama). The new
+  `grobid_container`, `ollama_container`, and `llamacpp_container` settings
+  belong to this source; managed containers keep their `ragrig-*` names.
 - **Ollama model provisioning.** A new **Pull models** action streams the
   configured chat, embedding, and memory models through `/api/pull`. Models are
   stored in the `ragrig-ollama-models` volume, so they survive container
@@ -40,15 +46,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ProbeStatus` replace the GROBID-only names; the old names remain as type
   aliases behind the `grobid` feature. Events carry a `ServiceKind`, and methods
   take it as their first argument. `ExternalServiceEvent::UrlChanged` now
-  carries the service and URL.
+  carries the service and URL, and `Ready` carries the source to keep.
+  `ServiceSource` gained `ExistingContainer`, so exhaustive matches need a new
+  arm.
 - **New `managed` feature.** It enables the Docker lifecycle and implies
   `ragrig`; `grobid` now implies `managed` and only adds BibTeX ingestion.
 - `RagSettings` gains `ollama_source`, `ollama_image`, `ollama_auto_start`,
-  `llamacpp_source`, `llamacpp_image`, `llamacpp_model`, `llamacpp_args`, and
+  `ollama_container`, `llamacpp_source`, `llamacpp_image`,
+  `llamacpp_container`, `llamacpp_model`, `llamacpp_args`, and
   `llamacpp_auto_start`, with matching `RagField` variants in
-  `RagSection::Services`. `ServiceSource` replaces `GrobidSource`, which remains
-  an alias. Profiles preserve the new service choices like the existing GROBID
-  fields.
+  `RagSection::Services`. GROBID gains `grobid_container`. `ServiceSource`
+  replaces `GrobidSource`, which remains an alias. Profiles preserve the new
+  service choices like the existing GROBID fields.
 - `ServiceLaunch` and `ServiceKind` are public so hosts can build custom start
   actions without reading the settings page internals.
 
@@ -73,9 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 `cargo fmt --check`, `cargo check --all-targets --all-features`, `cargo test
 --all-features`, and `cargo clippy --all-targets --all-features -- -D warnings`
-are green. Tests: 176 unit tests passed (3 Docker-dependent tests ignored),
+are green. Tests: 177 unit tests passed (4 Docker-dependent tests ignored),
 2 gallery tests, 5 spike tests passed (1 ignored), and 2 doctests —
-**185 passed, 0 failed, 4 ignored**. New coverage exercises URL normalization,
+**186 passed, 0 failed, 5 ignored**. New coverage exercises URL normalization,
 container bodies and ports for all three services, named volumes, llama.cpp
 command construction, Ollama model selection, and the Docker error classifier.
 

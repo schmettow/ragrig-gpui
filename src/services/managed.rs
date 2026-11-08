@@ -240,6 +240,8 @@ pub enum ExternalServiceEvent {
         version: Option<String>,
         /// Whether the app created or started the container.
         managed: bool,
+        /// Source the service should keep after this start.
+        source: ServiceSource,
     },
     /// The URL a host should persist for `service` changed.
     UrlChanged {
@@ -260,6 +262,7 @@ pub enum ExternalServiceEvent {
 enum ServiceCommand {
     Inspect {
         kind: ServiceKind,
+        container: String,
         adopt: bool,
     },
     Probe {
@@ -271,16 +274,24 @@ enum ServiceCommand {
     },
     PullAndStart {
         kind: ServiceKind,
+        container: String,
         launch: ServiceLaunch,
+    },
+    StartExisting {
+        kind: ServiceKind,
+        container: String,
+        url: String,
     },
     PullModels {
         models: Vec<String>,
     },
     Stop {
         kind: ServiceKind,
+        container: String,
     },
     Remove {
         kind: ServiceKind,
+        container: String,
     },
 }
 
@@ -367,17 +378,50 @@ impl ExternalServices {
 
             for kind in ServiceKind::ALL {
                 let source = initial.service_source(kind);
+                let container = match source {
+                    ServiceSource::Managed => kind.container().to_owned(),
+                    ServiceSource::ExistingContainer => {
+                        initial.service_container(kind).trim().to_owned()
+                    }
+                    ServiceSource::Existing => String::new(),
+                };
                 match source {
                     ServiceSource::Managed => {
-                        let _ = commands.try_send(ServiceCommand::Inspect { kind, adopt: true });
+                        let _ = commands.try_send(ServiceCommand::Inspect {
+                            kind,
+                            container: container.clone(),
+                            adopt: true,
+                        });
                         let launch = ServiceLaunch::from_settings(&initial, kind);
                         if initial.service_auto_start(kind) && launch.missing_field(kind).is_none()
                         {
                             // `Inspect` runs first and reports the container
                             // state; this starts a stopped container or pulls
                             // the image when needed.
-                            let _ =
-                                commands.try_send(ServiceCommand::PullAndStart { kind, launch });
+                            let _ = commands.try_send(ServiceCommand::PullAndStart {
+                                kind,
+                                container,
+                                launch,
+                            });
+                        }
+                    }
+                    ServiceSource::ExistingContainer => {
+                        let _ = commands.try_send(ServiceCommand::Inspect {
+                            kind,
+                            container: container.clone(),
+                            adopt: false,
+                        });
+                        if initial.service_auto_start(kind) && !container.is_empty() {
+                            let _ = commands.try_send(ServiceCommand::StartExisting {
+                                kind,
+                                container,
+                                url: spec::existing_url(kind, &initial),
+                            });
+                        } else {
+                            let _ = commands.try_send(ServiceCommand::Probe {
+                                kind,
+                                url: spec::existing_url(kind, &initial),
+                            });
                         }
                     }
                     ServiceSource::Existing => {
@@ -464,9 +508,41 @@ impl ExternalServices {
 
     /// Re-inspect `kind` according to its configured source.
     pub fn refresh(&mut self, kind: ServiceKind, cx: &mut Context<Self>) {
-        match self.settings.read(cx).service_source(kind) {
+        let (source, container) = {
+            let settings = self.settings.read(cx);
+            let source = settings.service_source(kind);
+            let container = match source {
+                ServiceSource::Managed => kind.container().to_owned(),
+                ServiceSource::ExistingContainer => {
+                    settings.service_container(kind).trim().to_owned()
+                }
+                ServiceSource::Existing => String::new(),
+            };
+            (source, container)
+        };
+        match source {
             ServiceSource::Managed => {
-                self.send_quiet(kind, ServiceCommand::Inspect { kind, adopt: true }, cx);
+                self.send_quiet(
+                    kind,
+                    ServiceCommand::Inspect {
+                        kind,
+                        container,
+                        adopt: true,
+                    },
+                    cx,
+                );
+            }
+            ServiceSource::ExistingContainer => {
+                self.send_quiet(
+                    kind,
+                    ServiceCommand::Inspect {
+                        kind,
+                        container,
+                        adopt: false,
+                    },
+                    cx,
+                );
+                self.probe_existing(kind, cx);
             }
             ServiceSource::Existing => self.probe_existing(kind, cx),
         }
@@ -514,8 +590,48 @@ impl ExternalServices {
     }
 
     /// Pull `kind`'s image when needed, create the container, and wait for
-    /// health.
+    /// health. For an existing container, start it and wait for health without
+    /// creating, recreating, or removing it.
     pub fn start(&mut self, kind: ServiceKind, cx: &mut Context<Self>) {
+        let (source, container, url) = {
+            let settings = self.settings.read(cx);
+            let source = settings.service_source(kind);
+            let container = match source {
+                ServiceSource::Managed => kind.container().to_owned(),
+                _ => settings.service_container(kind).trim().to_owned(),
+            };
+            (source, container, spec::existing_url(kind, settings))
+        };
+        match source {
+            ServiceSource::Existing => {
+                self.state_mut(kind).notice = Some(
+                    "switch the source to Existing container or Docker container first".to_owned(),
+                );
+                cx.notify();
+                return;
+            }
+            ServiceSource::ExistingContainer => {
+                if container.is_empty() {
+                    self.state_mut(kind).notice = Some("enter the container name first".to_owned());
+                    cx.notify();
+                    return;
+                }
+                self.state_mut(kind).notice = None;
+                self.cancel.store(false, Ordering::Relaxed);
+                self.send_quiet(
+                    kind,
+                    ServiceCommand::StartExisting {
+                        kind,
+                        container,
+                        url,
+                    },
+                    cx,
+                );
+                return;
+            }
+            ServiceSource::Managed => {}
+        }
+
         let launch = ServiceLaunch::from_settings(self.settings.read(cx), kind);
         if let Some(message) = launch.missing_field(kind) {
             self.state_mut(kind).notice = Some(message.to_owned());
@@ -531,9 +647,22 @@ impl ExternalServices {
                 return;
             }
         }
+        if container.is_empty() {
+            self.state_mut(kind).notice = Some("enter the container name first".to_owned());
+            cx.notify();
+            return;
+        }
         self.state_mut(kind).notice = None;
         self.cancel.store(false, Ordering::Relaxed);
-        self.send_quiet(kind, ServiceCommand::PullAndStart { kind, launch }, cx);
+        self.send_quiet(
+            kind,
+            ServiceCommand::PullAndStart {
+                kind,
+                container,
+                launch,
+            },
+            cx,
+        );
     }
 
     /// Pull the configured Ollama models into the running container.
@@ -560,14 +689,39 @@ impl ExternalServices {
 
     /// Stop the managed container for `kind` without removing it.
     pub fn stop(&mut self, kind: ServiceKind, cx: &mut Context<Self>) {
+        let (source, container) = {
+            let settings = self.settings.read(cx);
+            let source = settings.service_source(kind);
+            let container = match source {
+                ServiceSource::Managed => kind.container().to_owned(),
+                ServiceSource::ExistingContainer => {
+                    settings.service_container(kind).trim().to_owned()
+                }
+                ServiceSource::Existing => String::new(),
+            };
+            (source, container)
+        };
+        if source == ServiceSource::Existing {
+            self.state_mut(kind).notice =
+                Some("there is no container Scico may stop for this source".to_owned());
+            cx.notify();
+            return;
+        }
         self.state_mut(kind).container = ContainerStatus::Stopping;
-        self.send_quiet(kind, ServiceCommand::Stop { kind }, cx);
+        self.send_quiet(kind, ServiceCommand::Stop { kind, container }, cx);
     }
 
-    /// Stop and remove the managed container for `kind`.
+    /// Stop and remove a container Scico created.
     pub fn remove(&mut self, kind: ServiceKind, cx: &mut Context<Self>) {
+        if self.settings.read(cx).service_source(kind) != ServiceSource::Managed {
+            self.state_mut(kind).notice =
+                Some("only a container Scico created can be removed".to_owned());
+            cx.notify();
+            return;
+        }
+        let container = kind.container().to_owned();
         self.state_mut(kind).container = ContainerStatus::Stopping;
-        self.send_quiet(kind, ServiceCommand::Remove { kind }, cx);
+        self.send_quiet(kind, ServiceCommand::Remove { kind, container }, cx);
     }
 
     /// Clear a stale endpoint probe after the URL was edited.
@@ -639,6 +793,7 @@ impl ExternalServices {
                 url,
                 version,
                 managed,
+                source,
             } => {
                 let state = self.state_mut(*service);
                 state.container = ContainerStatus::Running;
@@ -656,14 +811,9 @@ impl ExternalServices {
                 if service.has_url_setting() {
                     changed_url = Some((*service, url.clone()));
                 }
-                let source = if *managed {
-                    ServiceSource::Managed
-                } else {
-                    ServiceSource::Existing
-                };
                 self.settings.update(cx, |settings, cx| {
-                    if settings.service_source(*service) != source {
-                        settings.set_service_source(*service, source);
+                    if settings.service_source(*service) != *source {
+                        settings.set_service_source(*service, *source);
                         cx.notify();
                     }
                 });
@@ -762,6 +912,25 @@ impl RagSettings {
         }
     }
 
+    /// Container name configured for the given service.
+    pub fn service_container(&self, kind: ServiceKind) -> &str {
+        match kind {
+            ServiceKind::Grobid => &self.grobid_container,
+            ServiceKind::Ollama => &self.ollama_container,
+            ServiceKind::LlamaCpp => &self.llamacpp_container,
+        }
+    }
+
+    /// Set the container name configured for the given service.
+    pub fn set_service_container(&mut self, kind: ServiceKind, container: impl Into<String>) {
+        let container = container.into();
+        match kind {
+            ServiceKind::Grobid => self.grobid_container = container,
+            ServiceKind::Ollama => self.ollama_container = container,
+            ServiceKind::LlamaCpp => self.llamacpp_container = container,
+        }
+    }
+
     /// Update the URL field of `kind`. Returns `true` when the value changed.
     fn set_service_url(&mut self, kind: ServiceKind, url: String) -> bool {
         let field = match kind {
@@ -804,14 +973,18 @@ async fn run(
             return;
         }
     };
-    let mut owns = [false; ServiceKind::ALL.len()];
+    let mut owned: [Option<String>; ServiceKind::ALL.len()] = std::array::from_fn(|_| None);
 
     while let Ok(command) = commands.recv().await {
         match command {
-            ServiceCommand::Inspect { kind, adopt } => {
-                let present = inspect(&client, &events, kind, adopt).await;
+            ServiceCommand::Inspect {
+                kind,
+                container,
+                adopt,
+            } => {
+                let present = inspect(&client, &events, kind, &container, adopt).await;
                 if adopt {
-                    owns[kind.index()] = present;
+                    owned[kind.index()] = present.then_some(container);
                 }
             }
             ServiceCommand::Probe { kind, url } => {
@@ -820,20 +993,35 @@ async fn run(
             ServiceCommand::Discover { kind } => {
                 discover(&client, &events, kind, &commands).await;
             }
-            ServiceCommand::PullAndStart { kind, launch } => {
-                if pull_and_start(&client, &launch, kind, &events, &commands, &cancel).await {
-                    owns[kind.index()] = true;
+            ServiceCommand::PullAndStart {
+                kind,
+                container,
+                launch,
+            } => {
+                if pull_and_start(
+                    &client, &launch, kind, &container, &events, &commands, &cancel,
+                )
+                .await
+                {
+                    owned[kind.index()] = Some(container);
                 }
+            }
+            ServiceCommand::StartExisting {
+                kind,
+                container,
+                url,
+            } => {
+                start_existing(&client, &events, kind, &container, &url, &commands, &cancel).await;
             }
             ServiceCommand::PullModels { models } => {
                 pull_ollama_models(&client, &models, &events, &commands, &cancel).await;
             }
-            ServiceCommand::Stop { kind } => {
-                stop(&events, kind).await;
+            ServiceCommand::Stop { kind, container } => {
+                stop(&events, kind, &container).await;
             }
-            ServiceCommand::Remove { kind } => {
-                if !remove(&events, kind).await {
-                    owns[kind.index()] = false;
+            ServiceCommand::Remove { kind, container } => {
+                if !remove(&events, kind, &container).await {
+                    owned[kind.index()] = None;
                 }
             }
         }
@@ -841,13 +1029,13 @@ async fn run(
 
     if let Ok(docker) = connect_docker_quiet().await {
         for kind in ServiceKind::ALL {
-            if !owns[kind.index()] {
+            let Some(container) = owned[kind.index()].as_deref() else {
                 continue;
-            }
+            };
             let options = StopContainerOptionsBuilder::default().t(5).build();
             let _ = tokio::time::timeout(
                 Duration::from_secs(8),
-                docker.stop_container(kind.container(), Some(options)),
+                docker.stop_container(container, Some(options)),
             )
             .await;
         }
@@ -858,13 +1046,14 @@ async fn inspect(
     client: &Client,
     events: &Sender<ExternalServiceEvent>,
     kind: ServiceKind,
+    container: &str,
     adopt: bool,
 ) -> bool {
     send_container(events, kind, ContainerStatus::Checking).await;
     let Some(docker) = connect_docker(events, kind).await else {
         return false;
     };
-    match docker.inspect_container(kind.container(), None).await {
+    match docker.inspect_container(container, None).await {
         Ok(info) => {
             let running = info
                 .state
@@ -883,6 +1072,7 @@ async fn inspect(
                             url: probe.url,
                             version: probe.version,
                             managed: true,
+                            source: ServiceSource::Managed,
                         })
                         .await
                         .ok();
@@ -1025,6 +1215,7 @@ async fn pull_and_start(
     client: &Client,
     launch: &ServiceLaunch,
     kind: ServiceKind,
+    container: &str,
     events: &Sender<ExternalServiceEvent>,
     commands: &async_channel::Receiver<ServiceCommand>,
     cancel: &AtomicBool,
@@ -1063,7 +1254,7 @@ async fn pull_and_start(
         return false;
     }
 
-    let inspected = docker.inspect_container(kind.container(), None).await.ok();
+    let inspected = docker.inspect_container(container, None).await.ok();
     let running = inspected.as_ref().is_some_and(|info| {
         info.state
             .as_ref()
@@ -1082,6 +1273,7 @@ async fn pull_and_start(
                     url: probe.url,
                     version: probe.version,
                     managed: false,
+                    source: ServiceSource::Existing,
                 })
                 .await
                 .ok();
@@ -1108,9 +1300,7 @@ async fn pull_and_start(
             // The image or llama.cpp command changed. Recreate the container
             // so Pull and start uses the settings currently on screen.
             let options = RemoveContainerOptionsBuilder::default().force(true).build();
-            let _ = docker
-                .remove_container(kind.container(), Some(options))
-                .await;
+            let _ = docker.remove_container(container, Some(options)).await;
             send_container(events, kind, ContainerStatus::Missing).await;
             None
         }
@@ -1119,8 +1309,8 @@ async fn pull_and_start(
     if existing.is_some() {
         if !running {
             send_container(events, kind, ContainerStatus::Starting).await;
-            if let Err(error) = docker.start_container(kind.container(), None).await {
-                let logs = container_logs(&docker, kind).await;
+            if let Err(error) = docker.start_container(container, None).await {
+                let logs = container_logs(&docker, container).await;
                 fail(
                     events,
                     kind,
@@ -1152,12 +1342,12 @@ async fn pull_and_start(
                 return false;
             }
         }
-        if let Err(error) = create_container(&docker, kind, launch).await {
+        if let Err(error) = create_container(&docker, kind, container, launch).await {
             fail(events, kind, &create_message(kind, &error)).await;
             return false;
         }
-        if let Err(error) = docker.start_container(kind.container(), None).await {
-            let logs = container_logs(&docker, kind).await;
+        if let Err(error) = docker.start_container(container, None).await {
+            let logs = container_logs(&docker, container).await;
             fail(
                 events,
                 kind,
@@ -1168,14 +1358,28 @@ async fn pull_and_start(
         }
     }
 
-    match wait_until_ready(client, &docker, events, kind, commands, cancel).await {
+    match wait_until_ready(
+        ServiceRun {
+            client,
+            docker: &docker,
+            events,
+            kind,
+            container,
+            commands,
+            cancel,
+        },
+        kind.managed_url(),
+        ServiceSource::Managed,
+    )
+    .await
+    {
         StartOutcome::Ready | StartOutcome::TimedOut => true,
         StartOutcome::Cancelled => {
             if commands.is_closed() {
                 return true;
             }
             let options = StopContainerOptionsBuilder::default().t(5).build();
-            let _ = docker.stop_container(kind.container(), Some(options)).await;
+            let _ = docker.stop_container(container, Some(options)).await;
             send_container(events, kind, ContainerStatus::Stopped).await;
             fail(events, kind, "start cancelled").await;
             true
@@ -1397,9 +1601,10 @@ async fn pull_ollama_model(
 async fn create_container(
     docker: &Docker,
     kind: ServiceKind,
+    container: &str,
     launch: &ServiceLaunch,
 ) -> Result<(), String> {
-    let mut options = CreateContainerOptionsBuilder::default().name(kind.container());
+    let mut options = CreateContainerOptionsBuilder::default().name(container);
     if let Some(platform) = kind.managed_platform(&launch.image) {
         options = options.platform(platform);
     }
@@ -1435,28 +1640,108 @@ async fn create_container(
         .map_err(|error| error.to_string())
 }
 
-async fn wait_until_ready(
+async fn start_existing(
     client: &Client,
-    docker: &Docker,
     events: &Sender<ExternalServiceEvent>,
     kind: ServiceKind,
+    container: &str,
+    url: &str,
     commands: &async_channel::Receiver<ServiceCommand>,
     cancel: &AtomicBool,
-) -> StartOutcome {
-    send_container(events, kind, ContainerStatus::Starting).await;
-    let timeout = kind.ready_timeout();
+) {
+    if container.trim().is_empty() {
+        fail(events, kind, "enter the container name").await;
+        return;
+    }
+    let Some(docker) = connect_docker(events, kind).await else {
+        return;
+    };
+    match docker.inspect_container(container, None).await {
+        Ok(info) => {
+            let running = info
+                .state
+                .as_ref()
+                .and_then(|state| state.running)
+                .unwrap_or(false);
+            if !running {
+                send_container(events, kind, ContainerStatus::Starting).await;
+                if let Err(error) = docker.start_container(container, None).await {
+                    let logs = container_logs(&docker, container).await;
+                    fail(
+                        events,
+                        kind,
+                        &start_message(kind, &error.to_string(), logs.as_deref()),
+                    )
+                    .await;
+                    return;
+                }
+            }
+        }
+        Err(_) => {
+            fail(
+                events,
+                kind,
+                &format!(
+                    "container '{container}' does not exist. Create it with Docker, or switch the source to Docker container so Scico can create it."
+                ),
+            )
+            .await;
+            return;
+        }
+    }
+
+    match wait_until_ready(
+        ServiceRun {
+            client,
+            docker: &docker,
+            events,
+            kind,
+            container,
+            commands,
+            cancel,
+        },
+        url,
+        ServiceSource::ExistingContainer,
+    )
+    .await
+    {
+        StartOutcome::Ready | StartOutcome::TimedOut => {}
+        StartOutcome::Cancelled => {
+            if !commands.is_closed() {
+                fail(
+                    events,
+                    kind,
+                    "start cancelled; the existing container is left running",
+                )
+                .await;
+            }
+        }
+    }
+}
+
+struct ServiceRun<'a> {
+    client: &'a Client,
+    docker: &'a Docker,
+    events: &'a Sender<ExternalServiceEvent>,
+    kind: ServiceKind,
+    container: &'a str,
+    commands: &'a async_channel::Receiver<ServiceCommand>,
+    cancel: &'a AtomicBool,
+}
+
+async fn wait_until_ready(run: ServiceRun<'_>, url: &str, source: ServiceSource) -> StartOutcome {
+    send_container(run.events, run.kind, ContainerStatus::Starting).await;
+    let timeout = run.kind.ready_timeout();
     let deadline = Instant::now() + timeout;
 
     loop {
-        if cancelled(commands, cancel) {
+        if cancelled(run.commands, run.cancel) {
             return StartOutcome::Cancelled;
         }
-        if let Ok(probe) =
-            spec::probe(client, kind, kind.managed_url(), Duration::from_secs(2)).await
-        {
-            events
+        if let Ok(probe) = spec::probe(run.client, run.kind, url, Duration::from_secs(2)).await {
+            run.events
                 .send(ExternalServiceEvent::Probe {
-                    service: kind,
+                    service: run.kind,
                     status: ProbeStatus::Reachable {
                         url: probe.url.clone(),
                         version: probe.version.clone(),
@@ -1464,12 +1749,13 @@ async fn wait_until_ready(
                 })
                 .await
                 .ok();
-            events
+            run.events
                 .send(ExternalServiceEvent::Ready {
-                    service: kind,
+                    service: run.kind,
                     url: probe.url,
                     version: probe.version,
                     managed: true,
+                    source,
                 })
                 .await
                 .ok();
@@ -1477,29 +1763,28 @@ async fn wait_until_ready(
         }
         if Instant::now() >= deadline {
             let mut message = format!(
-                "{} did not answer {} within {} seconds",
-                kind.label(),
-                kind.managed_url(),
+                "{} did not answer {url} within {} seconds",
+                run.kind.label(),
                 timeout.as_secs()
             );
-            if let Some(logs) = container_logs(docker, kind).await {
+            if let Some(logs) = container_logs(run.docker, run.container).await {
                 message.push_str(". Last container output: ");
                 message.push_str(&logs);
             }
-            fail(events, kind, &message).await;
+            fail(run.events, run.kind, &message).await;
             return StartOutcome::TimedOut;
         }
         tokio::time::sleep(Duration::from_millis(750)).await;
     }
 }
 
-async fn container_logs(docker: &Docker, kind: ServiceKind) -> Option<String> {
+async fn container_logs(docker: &Docker, container: &str) -> Option<String> {
     let options = LogsOptionsBuilder::default()
         .stdout(true)
         .stderr(true)
         .tail("24")
         .build();
-    let mut stream = docker.logs(kind.container(), Some(options));
+    let mut stream = docker.logs(container, Some(options));
     let mut text = String::new();
     while let Some(Ok(output)) = stream.next().await {
         match output {
@@ -1529,20 +1814,16 @@ async fn container_logs(docker: &Docker, kind: ServiceKind) -> Option<String> {
     Some(text.replace('\n', " · "))
 }
 
-async fn stop(events: &Sender<ExternalServiceEvent>, kind: ServiceKind) {
+async fn stop(events: &Sender<ExternalServiceEvent>, kind: ServiceKind, container: &str) {
     let Some(docker) = connect_docker(events, kind).await else {
         return;
     };
-    if docker
-        .inspect_container(kind.container(), None)
-        .await
-        .is_err()
-    {
+    if docker.inspect_container(container, None).await.is_err() {
         send_container(events, kind, ContainerStatus::Missing).await;
         return;
     }
     let options = StopContainerOptionsBuilder::default().t(10).build();
-    match docker.stop_container(kind.container(), Some(options)).await {
+    match docker.stop_container(container, Some(options)).await {
         Ok(()) => send_container(events, kind, ContainerStatus::Stopped).await,
         Err(error) => {
             fail(
@@ -1555,27 +1836,19 @@ async fn stop(events: &Sender<ExternalServiceEvent>, kind: ServiceKind) {
     }
 }
 
-async fn remove(events: &Sender<ExternalServiceEvent>, kind: ServiceKind) -> bool {
+async fn remove(events: &Sender<ExternalServiceEvent>, kind: ServiceKind, container: &str) -> bool {
     let Some(docker) = connect_docker(events, kind).await else {
         return true;
     };
-    let exists = docker
-        .inspect_container(kind.container(), None)
-        .await
-        .is_ok();
+    let exists = docker.inspect_container(container, None).await.is_ok();
     if !exists {
         send_container(events, kind, ContainerStatus::Missing).await;
         return false;
     }
     let stop_options = StopContainerOptionsBuilder::default().t(5).build();
-    let _ = docker
-        .stop_container(kind.container(), Some(stop_options))
-        .await;
+    let _ = docker.stop_container(container, Some(stop_options)).await;
     let options = RemoveContainerOptionsBuilder::default().force(true).build();
-    match docker
-        .remove_container(kind.container(), Some(options))
-        .await
-    {
+    match docker.remove_container(container, Some(options)).await {
         Ok(()) => {
             send_container(events, kind, ContainerStatus::Missing).await;
             false
@@ -2041,6 +2314,7 @@ mod tests {
             .build()
             .expect("client");
         let cancel = AtomicBool::new(false);
+        let container = ServiceKind::Ollama.container();
 
         pull_image(
             &docker,
@@ -2052,30 +2326,30 @@ mod tests {
         )
         .await
         .expect("pull");
-        create_container(&docker, ServiceKind::Ollama, &launch)
+        create_container(&docker, ServiceKind::Ollama, container, &launch)
             .await
             .expect("create");
-        if let Err(error) = docker
-            .start_container(ServiceKind::Ollama.container(), None)
-            .await
-        {
+        if let Err(error) = docker.start_container(container, None).await {
             let options = RemoveContainerOptionsBuilder::default().force(true).build();
-            let _ = docker
-                .remove_container(ServiceKind::Ollama.container(), Some(options))
-                .await;
+            let _ = docker.remove_container(container, Some(options)).await;
             panic!("start: {error}");
         }
         let outcome = wait_until_ready(
-            &client,
-            &docker,
-            &events_tx,
-            ServiceKind::Ollama,
-            &commands,
-            &cancel,
+            ServiceRun {
+                client: &client,
+                docker: &docker,
+                events: &events_tx,
+                kind: ServiceKind::Ollama,
+                container,
+                commands: &commands,
+                cancel: &cancel,
+            },
+            ServiceKind::Ollama.managed_url(),
+            ServiceSource::Managed,
         )
         .await;
-        stop(&events_tx, ServiceKind::Ollama).await;
-        let removed = remove(&events_tx, ServiceKind::Ollama).await;
+        stop(&events_tx, ServiceKind::Ollama, container).await;
+        let removed = remove(&events_tx, ServiceKind::Ollama, container).await;
 
         assert!(matches!(outcome, StartOutcome::Ready));
         assert!(
@@ -2131,6 +2405,7 @@ mod tests {
             &client,
             &launch,
             ServiceKind::Ollama,
+            ServiceKind::Ollama.container(),
             &events_tx,
             &commands,
             &AtomicBool::new(false),
@@ -2157,6 +2432,72 @@ mod tests {
             "no managed container should have been created"
         );
         drop(commands_tx);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires Docker and RAGRIG_OLLAMA_CONTAINER_TEST=<container>; run with --ignored"]
+    async fn an_existing_container_is_started_by_name() {
+        let Some(container) = std::env::var("RAGRIG_OLLAMA_CONTAINER_TEST")
+            .ok()
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty())
+        else {
+            eprintln!("skipping: set RAGRIG_OLLAMA_CONTAINER_TEST to a container name");
+            return;
+        };
+        let docker = connect_docker_quiet().await.expect("docker daemon");
+        let info = match docker.inspect_container(&container, None).await {
+            Ok(info) => info,
+            Err(_) => {
+                eprintln!("skipping: container '{container}' does not exist");
+                return;
+            }
+        };
+        let was_running = info
+            .state
+            .as_ref()
+            .and_then(|state| state.running)
+            .unwrap_or(false);
+
+        let (commands_tx, commands) = async_channel::bounded(16);
+        let (events_tx, events) = async_channel::bounded(64);
+        let client = Client::builder()
+            .connect_timeout(Duration::from_secs(4))
+            .build()
+            .expect("client");
+
+        start_existing(
+            &client,
+            &events_tx,
+            ServiceKind::Ollama,
+            &container,
+            ServiceKind::Ollama.managed_url(),
+            &commands,
+            &AtomicBool::new(false),
+        )
+        .await;
+
+        let events: Vec<_> = std::iter::from_fn(|| events.try_recv().ok()).collect();
+        let ready = events.iter().any(|event| {
+            matches!(
+                event,
+                ExternalServiceEvent::Ready {
+                    service: ServiceKind::Ollama,
+                    managed: true,
+                    source: ServiceSource::ExistingContainer,
+                    ..
+                }
+            )
+        });
+        if !was_running {
+            stop(&events_tx, ServiceKind::Ollama, &container).await;
+        }
+        drop(commands_tx);
+
+        assert!(
+            ready,
+            "the existing container never reported ready: {events:#?}"
+        );
     }
 
     #[test]

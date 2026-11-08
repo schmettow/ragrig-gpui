@@ -22,7 +22,8 @@ mod settings_page;
 pub use attach::ScicoAttach;
 pub use chat::{RagChat, RagChatEvent};
 pub use config::{
-    ChatProvider, DEFAULT_GROBID_IMAGE, DEFAULT_GROBID_URL, DEFAULT_LLAMACPP_IMAGE,
+    ChatProvider, DEFAULT_GROBID_CONTAINER, DEFAULT_GROBID_IMAGE, DEFAULT_GROBID_URL,
+    DEFAULT_LLAMACPP_CONTAINER, DEFAULT_LLAMACPP_IMAGE, DEFAULT_OLLAMA_CONTAINER,
     DEFAULT_OLLAMA_IMAGE, GrobidSource, MemoryChoice, PdfBackend, RagChanges, RagField, RagSection,
     RagSettings, RagSetup, ServiceSource,
 };

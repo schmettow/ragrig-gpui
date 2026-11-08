@@ -67,7 +67,7 @@ pub fn external_services_page(
         page = page.header_style(&dirty_header(cx));
     }
 
-    if has_managed_source(&settings, cx) {
+    if uses_docker_source(&settings, cx) {
         page = page.group(docker_group(settings.clone(), service.clone()));
     }
     #[cfg(feature = "grobid")]
@@ -97,11 +97,13 @@ fn group_dirty(changes: &crate::rag::RagChanges, kind: ServiceKind) -> bool {
             RagField::GrobidUrl,
             RagField::GrobidImage,
             RagField::GrobidAutoStart,
+            RagField::GrobidContainer,
         ],
         ServiceKind::Ollama => &[
             RagField::OllamaSource,
             RagField::OllamaImage,
             RagField::OllamaAutoStart,
+            RagField::OllamaContainer,
         ],
         ServiceKind::LlamaCpp => &[
             RagField::LlamaCppSource,
@@ -109,16 +111,20 @@ fn group_dirty(changes: &crate::rag::RagChanges, kind: ServiceKind) -> bool {
             RagField::LlamaCppModel,
             RagField::LlamaCppArgs,
             RagField::LlamaCppAutoStart,
+            RagField::LlamaCppContainer,
         ],
     };
     fields.iter().any(|field| changes.contains(*field))
 }
 
-fn has_managed_source(settings: &Entity<RagSettings>, cx: &App) -> bool {
+fn uses_docker_source(settings: &Entity<RagSettings>, cx: &App) -> bool {
     let settings = settings.read(cx);
-    ServiceKind::ALL
-        .iter()
-        .any(|kind| settings.service_source(*kind) == ServiceSource::Managed)
+    ServiceKind::ALL.iter().any(|kind| {
+        matches!(
+            settings.service_source(*kind),
+            ServiceSource::Managed | ServiceSource::ExistingContainer
+        )
+    })
 }
 
 fn docker_group(settings: Entity<RagSettings>, service: Entity<ExternalServices>) -> SettingGroup {
@@ -138,7 +144,7 @@ fn docker_group(settings: Entity<RagSettings>, service: Entity<ExternalServices>
     });
     let refresh_service = service;
     let actions = SettingItem::render(move |_, _, cx| {
-        let enabled = has_managed_source(&settings, cx);
+        let enabled = uses_docker_source(&settings, cx);
         let refresh = refresh_service.clone();
         Button::new("services-docker-refresh")
             .label("Refresh status")
@@ -184,11 +190,18 @@ fn grobid_group(
         group = group
             .item(grobid_url_row(&settings, &service, &changes).into_item())
             .item(status_item(&settings, &service, kind));
+    } else if source_value(&settings, kind, cx) == ServiceSource::ExistingContainer {
+        group = group
+            .item(container_name_row(&settings, &changes, kind))
+            .item(auto_start_row(&settings, &changes, kind))
+            .item(grobid_url_row(&settings, &service, &changes).into_item())
+            .item(actions_item(&settings, &service, kind))
+            .item(status_item(&settings, &service, kind));
     } else {
         group = group
             .item(auto_start_row(&settings, &changes, kind))
             .item(image_row(&settings, &changes, kind).into_item())
-            .item(actions_item(&service, kind))
+            .item(actions_item(&settings, &service, kind))
             .item(status_item(&settings, &service, kind));
     }
     group.footer(|_, cx| {
@@ -218,11 +231,17 @@ fn ollama_group(
         group = group
             .item(probe_actions_item(&service, kind))
             .item(status_item(&settings, &service, kind));
+    } else if source_value(&settings, kind, cx) == ServiceSource::ExistingContainer {
+        group = group
+            .item(container_name_row(&settings, &changes, kind))
+            .item(auto_start_row(&settings, &changes, kind))
+            .item(actions_item(&settings, &service, kind))
+            .item(status_item(&settings, &service, kind));
     } else {
         group = group
             .item(auto_start_row(&settings, &changes, kind))
             .item(image_row(&settings, &changes, kind).into_item())
-            .item(actions_item(&service, kind))
+            .item(actions_item(&settings, &service, kind))
             .item(status_item(&settings, &service, kind));
     }
     group.footer(|_, cx| {
@@ -252,13 +271,19 @@ fn llamacpp_group(
         group = group
             .item(probe_actions_item(&service, kind))
             .item(status_item(&settings, &service, kind));
+    } else if source_value(&settings, kind, cx) == ServiceSource::ExistingContainer {
+        group = group
+            .item(container_name_row(&settings, &changes, kind))
+            .item(auto_start_row(&settings, &changes, kind))
+            .item(actions_item(&settings, &service, kind))
+            .item(status_item(&settings, &service, kind));
     } else {
         group = group
             .item(auto_start_row(&settings, &changes, kind))
             .item(image_row(&settings, &changes, kind).into_item())
             .item(llamacpp_model_row(&settings, &changes).into_item())
             .item(llamacpp_args_row(&settings, &changes).into_item())
-            .item(actions_item(&service, kind))
+            .item(actions_item(&settings, &service, kind))
             .item(status_item(&settings, &service, kind));
     }
     group.footer(|_, cx| {
@@ -310,10 +335,10 @@ fn source_row(
                 }
             });
             service_for_write.update(cx, |service, cx| {
-                if source == ServiceSource::Managed {
-                    service.refresh(kind, cx);
-                } else {
+                if source == ServiceSource::Existing {
                     service.probe_existing(kind, cx);
+                } else {
+                    service.refresh(kind, cx);
                 }
             });
         },
@@ -324,12 +349,14 @@ fn source_row(
     };
     SettingRow::new("Source", dropdown)
         .description(match kind {
-            ServiceKind::Grobid => "A running server can be discovered or entered by URL.",
+            ServiceKind::Grobid => {
+                "A running server can be discovered or entered by URL. An existing container is started and stopped by name."
+            }
             ServiceKind::Ollama => {
-                "Use a daemon at localhost:11434 or let the app run the official container."
+                "Use a daemon at localhost:11434, start an existing container by name, or let the app run the official container."
             }
             ServiceKind::LlamaCpp => {
-                "Use an existing llama-server or let the app run the official container."
+                "Use an existing llama-server, start an existing container by name, or let the app run the official container."
             }
         })
         .dirty(dirty)
@@ -389,6 +416,37 @@ fn image_row(settings: &Entity<RagSettings>, changes: &Changes, kind: ServiceKin
             }
         })
         .dirty(move |cx| changes(cx).contains(image_field(kind)))
+}
+
+fn container_name_row(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    kind: ServiceKind,
+) -> SettingItem {
+    let settings_for_read = settings.clone();
+    let writer = settings.clone();
+    let name = text_control(
+        container_key(kind),
+        move |cx| {
+            settings_for_read
+                .read(cx)
+                .service_container(kind)
+                .to_owned()
+        },
+        move |value, cx| {
+            writer.update(cx, |settings, cx| {
+                settings.set_service_container(kind, value);
+                cx.notify();
+            });
+        },
+    );
+    let changes = changes.clone();
+    SettingRow::new("Container name", name)
+        .description(
+            "The Docker container Scico starts and stops. It is never recreated or removed.",
+        )
+        .dirty(move |cx| changes(cx).contains(container_field(kind)))
+        .into_item()
 }
 
 fn llamacpp_model_row(settings: &Entity<RagSettings>, changes: &Changes) -> SettingRow {
@@ -534,10 +592,16 @@ fn probe_actions_item(service: &Entity<ExternalServices>, kind: ServiceKind) -> 
     })
 }
 
-fn actions_item(service: &Entity<ExternalServices>, kind: ServiceKind) -> SettingItem {
+fn actions_item(
+    settings: &Entity<RagSettings>,
+    service: &Entity<ExternalServices>,
+    kind: ServiceKind,
+) -> SettingItem {
     let service_for_actions = service.clone();
+    let settings_for_actions = settings.clone();
     SettingItem::render(move |_, _, cx| {
         let service = service_for_actions.read(cx);
+        let source = settings_for_actions.read(cx).service_source(kind);
         let busy = service.is_busy(kind);
         let running = matches!(
             service.container(kind),
@@ -581,7 +645,11 @@ fn actions_item(service: &Entity<ExternalServices>, kind: ServiceKind) -> Settin
         } else {
             row = row.child(
                 Button::new(SharedString::from(format!("{}-start", kind.container())))
-                    .label(if stopped { "Start" } else { "Pull and start" })
+                    .label(if source == ServiceSource::Managed && !stopped {
+                        "Pull and start"
+                    } else {
+                        "Start"
+                    })
                     .small()
                     .primary()
                     .disabled(busy)
@@ -612,16 +680,18 @@ fn actions_item(service: &Entity<ExternalServices>, kind: ServiceKind) -> Settin
                     }),
             );
         }
-        row = row.child(
-            Button::new(SharedString::from(format!("{}-remove", kind.container())))
-                .label("Remove container")
-                .small()
-                .outline()
-                .disabled(busy || missing)
-                .on_click(move |_, _, cx| {
-                    remove_service.update(cx, |service, cx| service.remove(kind, cx));
-                }),
-        );
+        if source == ServiceSource::Managed {
+            row = row.child(
+                Button::new(SharedString::from(format!("{}-remove", kind.container())))
+                    .label("Remove container")
+                    .small()
+                    .outline()
+                    .disabled(busy || missing)
+                    .on_click(move |_, _, cx| {
+                        remove_service.update(cx, |service, cx| service.remove(kind, cx));
+                    }),
+            );
+        }
         row = row.child(
             Button::new(SharedString::from(format!("{}-refresh", kind.container())))
                 .label("Refresh")
@@ -657,7 +727,14 @@ fn status_item(
         };
         let mut column = v_flex().gap_1();
 
-        if source == ServiceSource::Managed {
+        if source == ServiceSource::Existing {
+            column = column.child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(service.probe(kind).summary()),
+            );
+        } else {
             column = column
                 .child(
                     div()
@@ -670,14 +747,13 @@ fn status_item(
                         .text_sm()
                         .text_color(container_color)
                         .child(format!("Container: {}", service.container(kind).summary())),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(service.probe(kind).summary()),
                 );
-        } else {
-            column = column.child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(service.probe(kind).summary()),
-            );
         }
 
         match service.container(kind) {
@@ -704,7 +780,7 @@ fn status_item(
                     }),
             );
         }
-        if kind == ServiceKind::Ollama && source == ServiceSource::Managed {
+        if kind == ServiceKind::Ollama && source != ServiceSource::Existing {
             let models = service.pullable_models(cx);
             if !models.is_empty() {
                 column = column.child(
@@ -751,6 +827,14 @@ fn image_key(kind: ServiceKind) -> &'static str {
     }
 }
 
+fn container_key(kind: ServiceKind) -> &'static str {
+    match kind {
+        ServiceKind::Grobid => "grobid-container",
+        ServiceKind::Ollama => "ollama-container",
+        ServiceKind::LlamaCpp => "llamacpp-container",
+    }
+}
+
 fn source_field(kind: ServiceKind) -> RagField {
     match kind {
         ServiceKind::Grobid => RagField::GrobidSource,
@@ -764,6 +848,14 @@ fn image_field(kind: ServiceKind) -> RagField {
         ServiceKind::Grobid => RagField::GrobidImage,
         ServiceKind::Ollama => RagField::OllamaImage,
         ServiceKind::LlamaCpp => RagField::LlamaCppImage,
+    }
+}
+
+fn container_field(kind: ServiceKind) -> RagField {
+    match kind {
+        ServiceKind::Grobid => RagField::GrobidContainer,
+        ServiceKind::Ollama => RagField::OllamaContainer,
+        ServiceKind::LlamaCpp => RagField::LlamaCppContainer,
     }
 }
 
