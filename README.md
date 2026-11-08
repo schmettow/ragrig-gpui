@@ -276,7 +276,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 173 library tests (three ignored: the GROBID end-to-end
+Current suite: 176 library tests (three ignored: the GROBID end-to-end
 test and the two Docker-dependent managed-container tests), 2 gallery tests,
 5 active spike tests plus one ignored typing benchmark, and 2 doctests. The
 GROBID end-to-end test runs with:

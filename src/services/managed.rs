@@ -1049,6 +1049,20 @@ async fn pull_and_start(
         return false;
     };
 
+    let image_is_local = docker.inspect_image(&launch.image).await.is_ok();
+    if !image_is_local && docker.inspect_container(&launch.image, None).await.is_ok() {
+        fail(
+            events,
+            kind,
+            &format!(
+                "'{image}' is a container, not an image. Start it with Docker and select Existing server (recommended for a hand-configured container), or enter the image it was built from.",
+                image = launch.image
+            ),
+        )
+        .await;
+        return false;
+    }
+
     let inspected = docker.inspect_container(kind.container(), None).await.ok();
     let running = inspected.as_ref().is_some_and(|info| {
         info.state
@@ -1106,35 +1120,50 @@ async fn pull_and_start(
         if !running {
             send_container(events, kind, ContainerStatus::Starting).await;
             if let Err(error) = docker.start_container(kind.container(), None).await {
-                fail(events, kind, &start_message(kind, &error.to_string())).await;
+                let logs = container_logs(&docker, kind).await;
+                fail(
+                    events,
+                    kind,
+                    &start_message(kind, &error.to_string(), logs.as_deref()),
+                )
+                .await;
                 return true;
             }
         }
     } else {
-        if let Err(error) = pull_image(&docker, kind, &launch.image, events, commands, cancel).await
-        {
-            if error == CANCELLED {
+        if !image_is_local {
+            if let Err(error) =
+                pull_image(&docker, kind, &launch.image, events, commands, cancel).await
+            {
+                if error == CANCELLED {
+                    if !commands.is_closed() {
+                        send_container(events, kind, ContainerStatus::Missing).await;
+                        fail(events, kind, "pull cancelled").await;
+                    }
+                    return false;
+                }
+                fail(events, kind, &pull_message(kind, &launch.image, &error)).await;
+                return false;
+            }
+            if cancelled(commands, cancel) {
                 if !commands.is_closed() {
-                    send_container(events, kind, ContainerStatus::Missing).await;
                     fail(events, kind, "pull cancelled").await;
                 }
                 return false;
             }
-            fail(events, kind, &pull_message(kind, &launch.image, &error)).await;
-            return false;
-        }
-        if cancelled(commands, cancel) {
-            if !commands.is_closed() {
-                fail(events, kind, "pull cancelled").await;
-            }
-            return false;
         }
         if let Err(error) = create_container(&docker, kind, launch).await {
             fail(events, kind, &create_message(kind, &error)).await;
             return false;
         }
         if let Err(error) = docker.start_container(kind.container(), None).await {
-            fail(events, kind, &start_message(kind, &error.to_string())).await;
+            let logs = container_logs(&docker, kind).await;
+            fail(
+                events,
+                kind,
+                &start_message(kind, &error.to_string(), logs.as_deref()),
+            )
+            .await;
             return true;
         }
     }
@@ -1652,22 +1681,39 @@ pub fn docker_message(error: &str) -> String {
     }
 }
 
-fn start_message(kind: ServiceKind, error: &str) -> String {
+/// Whether an error is the daemon refusing access to the Docker socket.
+///
+/// Container runtime errors can also contain "permission denied" (a missing
+/// device, an unreadable bind mount, or a non-root image user). Only errors
+/// that name the Docker socket or daemon are socket-access problems.
+fn is_docker_access_error(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
-    if lower.contains("mount")
+    let names_daemon = lower.contains("docker daemon")
+        || lower.contains("docker.sock")
+        || lower.contains("docker_engine")
+        || lower.contains("error during connect")
+        || lower.contains("dial unix")
+        || lower.contains("cannot connect to the docker");
+    let denied = lower.contains("permission denied")
+        || lower.contains("access denied")
+        || lower.contains("access is denied")
+        || lower.contains("connection refused")
+        || lower.contains("no such file or directory");
+    names_daemon && denied
+}
+
+fn start_message(kind: ServiceKind, error: &str, logs: Option<&str>) -> String {
+    let lower = error.to_ascii_lowercase();
+    if is_docker_access_error(error) {
+        return docker_message(error);
+    }
+    let message = if lower.contains("mount")
         && (lower.contains("permission denied")
             || lower.contains("access denied")
             || lower.contains("not shared")
             || lower.contains("mounts denied"))
     {
         "Docker cannot read the model file. Share its folder with Docker Desktop, or move the .gguf file below your home directory, then press Start again.".to_owned()
-    } else if lower.contains("permission denied")
-        || lower.contains("access denied")
-        || lower.contains("access is denied")
-        || lower.contains("connection refused")
-        || lower.contains("is the docker daemon running")
-    {
-        docker_message(error)
     } else if lower.contains("port is already allocated")
         || lower.contains("address already in use")
     {
@@ -1681,47 +1727,55 @@ fn start_message(kind: ServiceKind, error: &str) -> String {
             "Docker cannot run the {} image on this host. Choose an image built for this platform.",
             kind.label()
         )
+    } else if lower.contains("permission denied")
+        || lower.contains("access denied")
+        || lower.contains("operation not permitted")
+    {
+        match kind {
+            ServiceKind::Ollama => "The Ollama container could not start because its process was denied access to a file or device. A custom image often needs devices such as /dev/dri (SYCL) or a different user; the managed container only publishes port 11434 and mounts its own model volume. Use Existing server for a container you configured by hand.".to_owned(),
+            ServiceKind::LlamaCpp => "The llama.cpp container could not start because its process was denied access to a file or device. Check the model file permissions and the container output.".to_owned(),
+            ServiceKind::Grobid => "The GROBID container could not start because its process was denied access to a file or device. Check the container output.".to_owned(),
+        }
     } else {
         format!("cannot start the {} container: {error}", kind.label())
+    };
+    with_logs(message, logs)
+}
+
+fn with_logs(mut message: String, logs: Option<&str>) -> String {
+    if let Some(logs) = logs.map(str::trim).filter(|logs| !logs.is_empty()) {
+        message.push_str(" Last container output: ");
+        message.push_str(logs);
     }
+    message
 }
 
 fn pull_message(kind: ServiceKind, image: &str, error: &str) -> String {
     let lower = error.to_ascii_lowercase();
-    if lower.contains("permission denied")
-        || lower.contains("access denied")
-        || lower.contains("access is denied")
-        || lower.contains("connection refused")
-        || lower.contains("is the docker daemon running")
-    {
-        docker_message(error)
-    } else if lower.contains("no matching manifest")
+    if is_docker_access_error(error) {
+        return docker_message(error);
+    }
+    if lower.contains("no matching manifest")
         || lower.contains("does not match the detected host platform")
     {
-        format!(
+        return format!(
             "the image '{image}' has no build for this platform. Choose a multi-architecture image for {}.",
             kind.label()
-        )
-    } else if lower.contains("unauthorized")
+        );
+    }
+    if lower.contains("unauthorized")
         || lower.contains("pull access denied")
         || lower.contains("authentication required")
     {
-        format!(
-            "Docker could not pull '{image}'. Check the image name, and run `docker login` when it is private."
-        )
-    } else {
-        format!("cannot pull '{image}': {error}")
+        return format!(
+            "Docker could not pull '{image}'. Check the image name and tag with `docker images`; a local image needs its tag (for example `ollama-sycl:local`), and a private registry needs `docker login`. If '{image}' is a container you created by hand, start it with Docker and select Existing server."
+        );
     }
+    format!("cannot pull '{image}': {error}")
 }
 
 fn create_message(kind: ServiceKind, error: &str) -> String {
-    let lower = error.to_ascii_lowercase();
-    if lower.contains("permission denied")
-        || lower.contains("access denied")
-        || lower.contains("access is denied")
-        || lower.contains("connection refused")
-        || lower.contains("is the docker daemon running")
-    {
+    if is_docker_access_error(error) {
         docker_message(error)
     } else {
         format!("cannot create the {} container: {error}", kind.label())
@@ -1870,6 +1924,7 @@ mod tests {
         let message = start_message(
             ServiceKind::Ollama,
             "Bind for 127.0.0.1:11434 failed: port is already allocated",
+            None,
         );
         assert!(message.contains("11434"), "{message}");
         assert!(message.contains("Existing server"), "{message}");
@@ -1880,9 +1935,44 @@ mod tests {
         let message = start_message(
             ServiceKind::LlamaCpp,
             "error while creating mount source path '/models/qwen.gguf': mkdir /models: permission denied",
+            None,
         );
         assert!(message.contains("model file"), "{message}");
         assert!(message.contains("Docker Desktop"), "{message}");
+    }
+
+    #[test]
+    fn pull_access_denied_is_not_a_docker_socket_error() {
+        let message = pull_message(
+            ServiceKind::Ollama,
+            "ollama-sycl",
+            "Error response from daemon: pull access denied for ollama-sycl, repository does not exist or may require 'docker login'",
+        );
+        assert!(!message.contains("usermod"), "{message}");
+        assert!(message.contains("docker images"), "{message}");
+        assert!(message.contains("Existing server"), "{message}");
+    }
+
+    #[test]
+    fn a_container_runtime_permission_error_does_not_blame_the_socket() {
+        let message = start_message(
+            ServiceKind::Ollama,
+            "failed to create task for container: error gathering device information while adding custom device \"/dev/dri\": permission denied",
+            Some("SYCL device not found"),
+        );
+        assert!(!message.contains("usermod"), "{message}");
+        assert!(message.contains("device"), "{message}");
+        assert!(message.contains("SYCL device not found"), "{message}");
+    }
+
+    #[test]
+    fn a_docker_socket_permission_error_names_the_group_fix() {
+        let message = start_message(
+            ServiceKind::Ollama,
+            "Got permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock",
+            None,
+        );
+        assert!(message.contains("usermod -aG docker"), "{message}");
     }
 
     #[test]

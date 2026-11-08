@@ -52,13 +52,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ServiceLaunch` and `ServiceKind` are public so hosts can build custom start
   actions without reading the settings page internals.
 
+### Fixed
+
+- **Registry and runtime permissions are no longer blamed on the Docker
+  socket.** `pull access denied for …` now names the image and tag, mentions
+  `docker images`/`docker login`, and suggests **Existing server** when the
+  value is a hand-made container. A container start that fails with a runtime
+  `permission denied` (a device, a bind mount, or a non-root image user) names
+  that cause instead of telling the user to join the `docker` group.
+- **Local images are used without a registry pull.** `inspect_image` runs
+  first, so a locally built image such as `ollama-sycl:local` no longer fails
+  with `pull access denied` merely because it is not on Docker Hub.
+- **An image field that names a container says so.** When the value is not an
+  image but an existing container, the error tells the user to start it and
+  select **Existing server**, or to enter the image it was built from.
+- **Start failures include the last container log lines**, matching the
+  readiness-timeout behaviour.
+
 ### Quality
 
 `cargo fmt --check`, `cargo check --all-targets --all-features`, `cargo test
 --all-features`, and `cargo clippy --all-targets --all-features -- -D warnings`
-are green. Tests: 173 unit tests passed (3 Docker-dependent tests ignored),
+are green. Tests: 176 unit tests passed (3 Docker-dependent tests ignored),
 2 gallery tests, 5 spike tests passed (1 ignored), and 2 doctests —
-**182 passed, 0 failed, 4 ignored**. New coverage exercises URL normalization,
+**185 passed, 0 failed, 4 ignored**. New coverage exercises URL normalization,
 container bodies and ports for all three services, named volumes, llama.cpp
 command construction, Ollama model selection, and the Docker error classifier.
 
