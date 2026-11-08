@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.8.0 — 2026-11-04
+## v0.9.0 — 2026-11-08
 
 ### Added
 
@@ -99,16 +99,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Quality
 
-`cargo fmt --check`, `cargo check --all-targets --all-features`, `cargo test
---all-features`, and `cargo clippy --all-targets --all-features -- -D warnings`
-are green. Tests: 195 unit tests passed (4 Docker-dependent tests ignored),
-2 gallery tests, 5 spike tests passed (1 ignored), and 2 doctests —
-**204 passed, 0 failed, 5 ignored**. New coverage exercises URL normalization,
-container bodies and ports for all three services, named volumes, llama.cpp
-command construction, Ollama model selection, the Docker error classifier, a
-per-field profile round-trip, host-state preservation across layers and profile
-loads, container-command source selection, onboarding step navigation and
-restart/skip, model-aware token suggestions, and workspace-history detection.
+Release validation on 2026-11-08 (Cargo 1.99.0, rustc 1.99.0).
+
+**Test coverage.** `cargo llvm-cov --all-features --summary-only` (doctests are
+not measured on stable Rust):
+
+| Metric | Covered | Total | Cover |
+| --- | ---: | ---: | ---: |
+| Regions | 13,865 | 24,191 | 57.31% |
+| Functions | 1,006 | 1,817 | 55.37% |
+| Lines | 8,417 | 15,286 | 55.06% |
+
+The least covered areas are the headless UI surfaces (`src/rag/chat.rs`,
+`src/rag/settings_page.rs`, and `src/services/settings_page.rs`, 0%; they are
+exercised through the example applications), the Docker lifecycle
+(`src/services/managed.rs`, 10.44% lines; the daemon tests are `#[ignore]`d),
+the worker controller (`src/rag/controller.rs`, 12.30%), the onboarding page
+(`src/rag/onboarding.rs`, 28.65%; the step machine, token suggestions, and
+workspace detection are unit-tested, while the GPUI page is exercised through
+Scico), `src/setting_fields.rs` (35.88%), `src/session_picker.rs` (39.74%),
+`src/rag/protocol.rs` (43.59%), and `src/paths.rs` (54.31%; the Linux portal
+branch is not exercised headlessly).
+
+**Tests.** `cargo test --all-features`: 195 unit tests (4 ignored), 2 gallery
+tests, 5 spike tests (1 ignored), and 2 doctests — **204 passed, 0 failed, 5
+ignored**. The new coverage exercises every onboarding step's navigation,
+skip/restart snapshots, local and frontier token suggestions, workspace-history
+detection, Docker container-command source selection, profile round-trips, and
+host-state preservation across layers and profile loads.
+
+**Checks.** `cargo fmt --check`, `cargo check --all-targets --all-features`,
+`cargo test --all-features`, `cargo clippy --all-targets --all-features -- -D
+warnings`, and `cargo doc --no-deps --all-features` (with
+`RUSTDOCFLAGS="-D warnings"`) are green.
+`cargo package --list --allow-dirty` ships 49 files (1.2 MiB, 266.1 KiB
+compressed), including `src/rag/onboarding.rs`.
+`cargo publish --dry-run --allow-dirty` packages and verifies ragrig-gpui 0.9.0
+successfully and aborts the upload as expected in a dry run.
+
+**Publication order.** `grobid-bibtex` 0.4.0 is already on crates.io. Publish
+ragrig-gpui 0.9.0 before scico 0.7.0, which requires
+`ragrig-gpui = "^0.9.0"`.
 
 ## v0.7.1 — 2026-11-04
 
