@@ -63,6 +63,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Workspace layers are partial overlays again.** Scico writes
+  `<workspace>/.ragrig/config.json` when the memory or hybrid switch changes.
+  On the next launch that layer was applied over the library defaults instead
+  of over `settings.json`, so the context size, maximum tokens, temperature,
+  prompts, and every GROBID/Ollama/llama.cpp source, image, and container name
+  silently reverted. `RagSettings::from_layers_over` now starts from the host's
+  current configuration and lets the layer override only the keys it names.
+- **Profiles keep host-owned state.** Loading a profile no longer resets the
+  bibliography, streaming, rename/OpenAlex/citation switches, hybrid retrieval,
+  or the external-service choices, and it no longer discards the model chosen
+  for providers other than the active one. `Profile Defaults` follows the same
+  rule.
 - **Registry and runtime permissions are no longer blamed on the Docker
   socket.** `pull access denied for …` now names the image and tag, mentions
   `docker images`/`docker login`, and suggests **Existing server** when the
@@ -82,11 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 `cargo fmt --check`, `cargo check --all-targets --all-features`, `cargo test
 --all-features`, and `cargo clippy --all-targets --all-features -- -D warnings`
-are green. Tests: 177 unit tests passed (4 Docker-dependent tests ignored),
+are green. Tests: 187 unit tests passed (4 Docker-dependent tests ignored),
 2 gallery tests, 5 spike tests passed (1 ignored), and 2 doctests —
-**186 passed, 0 failed, 5 ignored**. New coverage exercises URL normalization,
+**196 passed, 0 failed, 5 ignored**. New coverage exercises URL normalization,
 container bodies and ports for all three services, named volumes, llama.cpp
-command construction, Ollama model selection, and the Docker error classifier.
+command construction, Ollama model selection, the Docker error classifier, a
+per-field profile round-trip, host-state preservation across layers and profile
+loads, and container-command source selection.
 
 ## v0.7.1 — 2026-11-04
 

@@ -511,13 +511,8 @@ impl ExternalServices {
         let (source, container) = {
             let settings = self.settings.read(cx);
             let source = settings.service_source(kind);
-            let container = match source {
-                ServiceSource::Managed => kind.container().to_owned(),
-                ServiceSource::ExistingContainer => {
-                    settings.service_container(kind).trim().to_owned()
-                }
-                ServiceSource::Existing => String::new(),
-            };
+            let container = spec::command_container(kind, source, settings.service_container(kind))
+                .unwrap_or_default();
             (source, container)
         };
         match source {
@@ -593,14 +588,12 @@ impl ExternalServices {
     /// health. For an existing container, start it and wait for health without
     /// creating, recreating, or removing it.
     pub fn start(&mut self, kind: ServiceKind, cx: &mut Context<Self>) {
-        let (source, container, url) = {
+        let (source, container) = {
             let settings = self.settings.read(cx);
             let source = settings.service_source(kind);
-            let container = match source {
-                ServiceSource::Managed => kind.container().to_owned(),
-                _ => settings.service_container(kind).trim().to_owned(),
-            };
-            (source, container, spec::existing_url(kind, settings))
+            let container = spec::command_container(kind, source, settings.service_container(kind))
+                .unwrap_or_default();
+            (source, container)
         };
         match source {
             ServiceSource::Existing => {
@@ -616,6 +609,7 @@ impl ExternalServices {
                     cx.notify();
                     return;
                 }
+                let url = spec::existing_url(kind, self.settings.read(cx));
                 self.state_mut(kind).notice = None;
                 self.cancel.store(false, Ordering::Relaxed);
                 self.send_quiet(
@@ -692,18 +686,18 @@ impl ExternalServices {
         let (source, container) = {
             let settings = self.settings.read(cx);
             let source = settings.service_source(kind);
-            let container = match source {
-                ServiceSource::Managed => kind.container().to_owned(),
-                ServiceSource::ExistingContainer => {
-                    settings.service_container(kind).trim().to_owned()
-                }
-                ServiceSource::Existing => String::new(),
-            };
+            let container = spec::command_container(kind, source, settings.service_container(kind))
+                .unwrap_or_default();
             (source, container)
         };
         if source == ServiceSource::Existing {
             self.state_mut(kind).notice =
                 Some("there is no container Scico may stop for this source".to_owned());
+            cx.notify();
+            return;
+        }
+        if container.is_empty() {
+            self.state_mut(kind).notice = Some("enter the container name first".to_owned());
             cx.notify();
             return;
         }

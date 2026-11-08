@@ -12,7 +12,7 @@ use bollard::models::{
 };
 use reqwest::Client;
 
-use crate::rag::{ChatProvider, RagSettings};
+use crate::rag::{ChatProvider, RagSettings, ServiceSource};
 
 /// Name of the managed GROBID container.
 pub const MANAGED_GROBID_CONTAINER: &str = crate::rag::DEFAULT_GROBID_CONTAINER;
@@ -214,6 +214,25 @@ pub fn existing_url(kind: ServiceKind, settings: &RagSettings) -> String {
         ServiceKind::Grobid => settings.grobid_url.clone(),
         ServiceKind::Ollama => MANAGED_OLLAMA_URL.to_owned(),
         ServiceKind::LlamaCpp => settings.llamacpp_url.clone(),
+    }
+}
+
+/// The container a start, stop, or remove command acts on.
+///
+/// `None` means there is no container Scico may touch: the service runs as an
+/// existing server, or an existing-container source has no name yet.
+pub fn command_container(
+    kind: ServiceKind,
+    source: ServiceSource,
+    configured: &str,
+) -> Option<String> {
+    match source {
+        ServiceSource::Existing => None,
+        ServiceSource::ExistingContainer => {
+            let name = configured.trim();
+            (!name.is_empty()).then(|| name.to_owned())
+        }
+        ServiceSource::Managed => Some(kind.container().to_owned()),
     }
 }
 
@@ -703,6 +722,95 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn commands_target_the_right_container_for_each_source() {
+        for kind in ServiceKind::ALL {
+            assert_eq!(
+                command_container(kind, ServiceSource::Managed, "ignored"),
+                Some(kind.container().to_owned()),
+                "a managed source ignores the configured name"
+            );
+            assert_eq!(
+                command_container(kind, ServiceSource::ExistingContainer, " custom.sycl "),
+                Some("custom.sycl".to_owned()),
+                "an existing container is addressed by name"
+            );
+            assert_eq!(
+                command_container(kind, ServiceSource::ExistingContainer, "   "),
+                None,
+                "a missing container name is not a command target"
+            );
+            assert_eq!(
+                command_container(kind, ServiceSource::Existing, "custom.sycl"),
+                None,
+                "an existing server has no container"
+            );
+        }
+    }
+
+    #[test]
+    fn launch_options_come_from_the_matching_service() {
+        let settings = RagSettings {
+            grobid_image: " custom/grobid ".to_owned(),
+            ollama_image: " custom/ollama ".to_owned(),
+            llamacpp_image: " custom/llamacpp ".to_owned(),
+            llamacpp_model: " owner/model:Q4_K_M ".to_owned(),
+            llamacpp_args: " --n-gpu-layers all ".to_owned(),
+            ..RagSettings::default()
+        };
+
+        assert_eq!(
+            ServiceLaunch::from_settings(&settings, ServiceKind::Grobid).image,
+            "custom/grobid"
+        );
+        assert_eq!(
+            ServiceLaunch::from_settings(&settings, ServiceKind::Ollama).image,
+            "custom/ollama"
+        );
+        let llamacpp = ServiceLaunch::from_settings(&settings, ServiceKind::LlamaCpp);
+        assert_eq!(llamacpp.image, "custom/llamacpp");
+        assert_eq!(llamacpp.model, "owner/model:Q4_K_M");
+        assert_eq!(llamacpp.args, "--n-gpu-layers all");
+
+        let empty = ServiceLaunch::default();
+        assert_eq!(
+            empty.missing_field(ServiceKind::Grobid),
+            Some("enter a Docker image first")
+        );
+        let image_only = ServiceLaunch {
+            image: "custom/ollama".to_owned(),
+            ..ServiceLaunch::default()
+        };
+        assert_eq!(image_only.missing_field(ServiceKind::Ollama), None);
+        assert_eq!(
+            image_only.missing_field(ServiceKind::LlamaCpp),
+            Some("enter a Hugging Face model or a .gguf file first")
+        );
+    }
+
+    #[test]
+    fn existing_urls_follow_the_service() {
+        let settings = RagSettings {
+            grobid_url: "http://gpu-box:8070".to_owned(),
+            llamacpp_url: "http://gpu-box:8080/v1".to_owned(),
+            ..RagSettings::default()
+        };
+
+        assert_eq!(
+            existing_url(ServiceKind::Grobid, &settings),
+            "http://gpu-box:8070"
+        );
+        assert_eq!(
+            existing_url(ServiceKind::Ollama, &settings),
+            MANAGED_OLLAMA_URL,
+            "Ollama always answers on its managed loopback port"
+        );
+        assert_eq!(
+            existing_url(ServiceKind::LlamaCpp, &settings),
+            "http://gpu-box:8080/v1"
+        );
     }
 
     #[test]

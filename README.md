@@ -271,7 +271,14 @@ ragrig-gpui
 - `RagSettings::dirty_since(&applied)` returns a `RagChanges` set of
   `RagField`s; `RagSection` groups them for page and section indicators.
   `RagSettings::reset_to_profile_defaults()` reloads the selected profile (or
-  the built-in defaults while preserving the workspace and bibliography).
+  the built-in defaults while preserving host-owned state such as the
+  workspace, bibliography, runtime switches, and service containers).
+- `RagSettings::from_layers_over(workspace, base)` treats
+  `~/.ragrig/config.json` and `<workspace>/.ragrig/config.json` as partial
+  overlays on `base`. A layer that only sets one key therefore keeps the
+  generation limits, service containers, prompt, and per-provider models from
+  the host settings. `load_profile` follows the same rule: it replaces the
+  Ragrig configuration fields and leaves host-owned state alone.
 
 ## Checks
 
@@ -283,7 +290,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 177 library tests (four ignored: the GROBID end-to-end
+Current suite: 187 library tests (four ignored: the GROBID end-to-end
 test and the three Docker-dependent managed-container tests), 2 gallery tests,
 5 active spike tests plus one ignored typing benchmark, and 2 doctests. The
 GROBID end-to-end test runs with:

@@ -897,48 +897,10 @@ impl RagSettings {
             return self.load_profile(&name);
         }
 
-        let workspace = self.workspace.clone();
-        let bibliography = self.bibliography.clone();
-        let built_in_prompt = self.built_in_prompt.clone();
-        let grobid_source = self.grobid_source;
-        let grobid_url = self.grobid_url.clone();
-        let grobid_image = self.grobid_image.clone();
-        let grobid_auto_start = self.grobid_auto_start;
-        let grobid_container = self.grobid_container.clone();
-        let ollama_source = self.ollama_source;
-        let ollama_image = self.ollama_image.clone();
-        let ollama_auto_start = self.ollama_auto_start;
-        let ollama_container = self.ollama_container.clone();
-        let llamacpp_source = self.llamacpp_source;
-        let llamacpp_image = self.llamacpp_image.clone();
-        let llamacpp_container = self.llamacpp_container.clone();
-        let llamacpp_model = self.llamacpp_model.clone();
-        let llamacpp_args = self.llamacpp_args.clone();
-        let llamacpp_auto_start = self.llamacpp_auto_start;
-        let mut defaults = Self {
-            workspace,
-            bibliography,
-            grobid_source,
-            grobid_url,
-            grobid_image,
-            grobid_auto_start,
-            grobid_container,
-            ollama_source,
-            ollama_image,
-            ollama_auto_start,
-            ollama_container,
-            llamacpp_source,
-            llamacpp_image,
-            llamacpp_container,
-            llamacpp_model,
-            llamacpp_args,
-            llamacpp_auto_start,
-            profile_name: self.profile_name.clone(),
-            built_in_prompt: built_in_prompt.clone(),
-            system_prompt: built_in_prompt,
-            system_prompt_path: String::new(),
-            ..Self::default()
-        };
+        let mut defaults = Self::default();
+        defaults.inherit_host_state(self);
+        defaults.system_prompt_path.clear();
+        defaults.system_prompt = defaults.built_in_prompt.clone();
         defaults.refresh_profiles();
         defaults.status = Some("Reset to built-in defaults — press Apply".to_owned());
         *self = defaults;
@@ -1072,12 +1034,14 @@ impl RagSettings {
         )
     }
 
-    /// Like [`Self::from_layers`], but keeps the runtime memory and hybrid
-    /// switches from `base` when no layer mentions them.
+    /// Like [`Self::from_layers`], but treats the layer files as partial
+    /// overlays on `base`.
     ///
-    /// The status-bar switches live in `settings.json` as well as the
-    /// workspace layer; this prevents a layer that only sets, say, the chat
-    /// model from resetting them to their defaults.
+    /// Keys the layers name win; every other setting — generation limits,
+    /// prompts, per-provider models, and the GROBID/Ollama/llama.cpp choices
+    /// that live only in the host settings — survives. This prevents a
+    /// workspace layer that only sets, say, the chat model from resetting the
+    /// rest of the configuration.
     pub fn from_layers_over(workspace: &Path, base: &Self) -> Option<Self> {
         let global = home_ragrig_dir().map(|dir| dir.join("config.json"));
         Self::from_layer_paths(
@@ -1107,37 +1071,119 @@ impl RagSettings {
         if !found {
             return None;
         }
-        let memory_present = layers.pointer("/memory/strategy").is_some();
-        let hybrid_present = layers.get("hybrid").is_some();
-        let merged_hybrid = layers.get("hybrid").and_then(|value| value.as_bool());
-        let mut merged = serde_json::to_value(RagrigConfig::default()).ok()?;
-        merge_json(&mut merged, layers);
-        let config: RagrigConfig = serde_json::from_value(merged).ok()?;
-        let mut config = config;
+        let layer_hybrid = layers.get("hybrid").and_then(serde_json::Value::as_bool);
+        // Start from the host's current configuration, not from the library
+        // defaults: a layer that only names one key must not reset the rest.
+        let mut merged = match base {
+            Some(base) => serde_json::to_value(base.build_config()).ok()?,
+            None => serde_json::to_value(RagrigConfig::default()).ok()?,
+        };
+        merge_json(&mut merged, layers.clone());
+        let mut config: RagrigConfig = serde_json::from_value(merged).ok()?;
         // The layer file lives in `<root>/.ragrig/`; relative prompts and
         // bibliographies resolve against the workspace root, not the cwd.
         if let Some(root) = workspace.parent().and_then(Path::parent) {
             config.workspace = root.to_path_buf();
         }
         let mut settings = Self::from_config(&config);
-        if let Some(hybrid) = merged_hybrid {
+        if let Some(base) = base {
+            settings.inherit_host_state(base);
+            settings.workspace = config.workspace.to_string_lossy().into_owned();
+            settings.inherit_models(
+                base,
+                layers
+                    .pointer("/chat/model")
+                    .and_then(serde_json::Value::as_str),
+                layers
+                    .pointer("/chat/deepseek_model")
+                    .and_then(serde_json::Value::as_str),
+            );
+            match layers.pointer("/chat/system_prompt_path") {
+                None => {
+                    settings.system_prompt_path = base.system_prompt_path.clone();
+                    settings.system_prompt = base.system_prompt.clone();
+                }
+                Some(serde_json::Value::String(path)) if !path.trim().is_empty() => {}
+                Some(_) => {
+                    settings.system_prompt_path.clear();
+                    settings.system_prompt = base.built_in_prompt.clone();
+                }
+            }
+        }
+        if let Some(hybrid) = layer_hybrid {
             settings.hybrid = hybrid;
         }
-        if let Some(base) = base {
-            if !memory_present {
-                settings.memory = base.memory;
-            }
-            if !hybrid_present {
-                settings.hybrid = base.hybrid;
-            }
-        }
         Some(settings)
+    }
+
+    /// Carry the settings that live only in the host: the app settings file,
+    /// a status-bar switch, or the library location.
+    ///
+    /// Ragrig profiles and layer files cannot express these, so loading one
+    /// must never reset them.
+    fn inherit_host_state(&mut self, base: &Self) {
+        self.workspace = base.workspace.clone();
+        self.bibliography = base.bibliography.clone();
+        self.stream = base.stream;
+        self.hybrid = base.hybrid;
+        self.rename_pdfs = base.rename_pdfs;
+        self.openalex = base.openalex;
+        self.resolve_citations = base.resolve_citations;
+        self.grobid_source = base.grobid_source;
+        self.grobid_url = base.grobid_url.clone();
+        self.grobid_image = base.grobid_image.clone();
+        self.grobid_auto_start = base.grobid_auto_start;
+        self.grobid_container = base.grobid_container.clone();
+        self.ollama_source = base.ollama_source;
+        self.ollama_image = base.ollama_image.clone();
+        self.ollama_auto_start = base.ollama_auto_start;
+        self.ollama_container = base.ollama_container.clone();
+        self.llamacpp_source = base.llamacpp_source;
+        self.llamacpp_image = base.llamacpp_image.clone();
+        self.llamacpp_container = base.llamacpp_container.clone();
+        self.llamacpp_model = base.llamacpp_model.clone();
+        self.llamacpp_args = base.llamacpp_args.clone();
+        self.llamacpp_auto_start = base.llamacpp_auto_start;
+        self.built_in_prompt = base.built_in_prompt.clone();
+        self.profile_name = base.profile_name.clone();
+        self.profiles = base.profiles.clone();
+    }
+
+    /// Keep the per-provider model choices a profile or layer does not name.
+    ///
+    /// A [`RagrigConfig`] holds one active `chat.model`, so rebuilding
+    /// from one would reset every other provider to its default.
+    fn inherit_models(&mut self, base: &Self, model: Option<&str>, deepseek_model: Option<&str>) {
+        let mut models = base.models.clone();
+        if let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) {
+            let provider = if self.provider == ChatProvider::DeepSeek {
+                ChatProvider::Ollama
+            } else {
+                self.provider
+            };
+            models.insert(provider, model.to_owned());
+        }
+        if let Some(model) = deepseek_model
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        {
+            models.insert(ChatProvider::DeepSeek, model.to_owned());
+        }
+        self.models = models;
     }
 
     /// Validate and convert to a Ragrig configuration.
     pub fn to_config(&self) -> Result<RagrigConfig, String> {
         self.validate()?;
+        Ok(self.build_config())
+    }
 
+    /// Build a configuration without validating it.
+    ///
+    /// Layer merging starts from this shape, so an incomplete edit (an empty
+    /// model while typing, for example) must not make the whole layer
+    /// unreadable.
+    fn build_config(&self) -> RagrigConfig {
         let workspace = PathBuf::from(self.workspace.trim());
         let model = match self.provider {
             // `model` is ignored for DeepSeek; keep the Ollama choice so a
@@ -1197,7 +1243,7 @@ impl RagSettings {
             },
         };
 
-        Ok(RagrigConfig {
+        RagrigConfig {
             workspace,
             chat,
             embed,
@@ -1211,7 +1257,7 @@ impl RagSettings {
                 .collect(),
             corpus_urls: Vec::new(),
             semantic_scholar_api_key: None,
-        })
+        }
     }
 
     /// The custom prompt file, resolved against the workspace.
@@ -1446,48 +1492,20 @@ impl RagSettings {
         // A global profile resolves relative prompt paths against the actual
         // workspace, never against the home directory.
         config.workspace = workspace.to_path_buf();
-        let profiles = self.profiles.clone();
-        let built_in_prompt = self.built_in_prompt.clone();
-        // Hybrid retrieval and the service endpoint are runtime choices, not
-        // part of a profile, so keep them across profile switches.
-        let hybrid = self.hybrid;
-        let grobid_source = self.grobid_source;
-        let grobid_url = self.grobid_url.clone();
-        let grobid_image = self.grobid_image.clone();
-        let grobid_auto_start = self.grobid_auto_start;
-        let grobid_container = self.grobid_container.clone();
-        let ollama_source = self.ollama_source;
-        let ollama_image = self.ollama_image.clone();
-        let ollama_auto_start = self.ollama_auto_start;
-        let ollama_container = self.ollama_container.clone();
-        let llamacpp_source = self.llamacpp_source;
-        let llamacpp_image = self.llamacpp_image.clone();
-        let llamacpp_container = self.llamacpp_container.clone();
-        let llamacpp_model = self.llamacpp_model.clone();
-        let llamacpp_args = self.llamacpp_args.clone();
-        let llamacpp_auto_start = self.llamacpp_auto_start;
         let mut loaded = Self::from_config(&config);
-        loaded.hybrid = hybrid;
-        loaded.grobid_source = grobid_source;
-        loaded.grobid_url = grobid_url;
-        loaded.grobid_image = grobid_image;
-        loaded.grobid_auto_start = grobid_auto_start;
-        loaded.grobid_container = grobid_container;
-        loaded.ollama_source = ollama_source;
-        loaded.ollama_image = ollama_image;
-        loaded.ollama_auto_start = ollama_auto_start;
-        loaded.ollama_container = ollama_container;
-        loaded.llamacpp_source = llamacpp_source;
-        loaded.llamacpp_image = llamacpp_image;
-        loaded.llamacpp_container = llamacpp_container;
-        loaded.llamacpp_model = llamacpp_model;
-        loaded.llamacpp_args = llamacpp_args;
-        loaded.llamacpp_auto_start = llamacpp_auto_start;
-        loaded.profiles = profiles;
+        // Profiles carry Ragrig's configuration fields. Everything the host
+        // owns — library location, streaming, service containers, the prompt
+        // the host compiles in — must survive a profile switch.
+        loaded.inherit_host_state(self);
+        loaded.inherit_models(
+            self,
+            Some(&config.chat.model),
+            Some(&config.chat.deepseek_model),
+        );
+        loaded.workspace = workspace.to_string_lossy().into_owned();
         loaded.profile_name = name.to_owned();
-        loaded.built_in_prompt = built_in_prompt.clone();
         if loaded.system_prompt_path.is_empty() {
-            loaded.system_prompt = built_in_prompt;
+            loaded.system_prompt = loaded.built_in_prompt.clone();
         }
         loaded.status = Some(format!("Loaded profile '{name}' — press Apply"));
         *self = loaded;
@@ -1888,6 +1906,167 @@ mod tests {
     }
 
     #[test]
+    fn layers_keep_every_host_choice() {
+        let root = unique_temp_dir("ragrig-gpui-layer-host-state");
+        let global = root.join("home/.ragrig/config.json");
+        let workspace = root.join("paper/.ragrig/config.json");
+        std::fs::create_dir_all(global.parent().expect("global parent")).expect("global dir");
+        std::fs::create_dir_all(workspace.parent().expect("workspace parent"))
+            .expect("workspace dir");
+        std::fs::write(&global, r#"{"memory":{"strategy":"summary"}}"#).expect("layer");
+        std::fs::write(
+            &workspace,
+            r#"{"memory":{"strategy":"off"},"hybrid":false}"#,
+        )
+        .expect("layer");
+
+        let mut base = fixture();
+        base.context_tokens = 16_384;
+        base.max_tokens = 4096;
+        base.temperature = 0.7;
+        base.stream = false;
+        base.bibliography = "/tmp/library.bib".to_owned();
+        base.rename_pdfs = true;
+        base.openalex = true;
+        base.resolve_citations = false;
+        base.system_prompt = "Host prompt".to_owned();
+        base.system_prompt_path = "/tmp/host-prompt.md".to_owned();
+        base.grobid_source = GrobidSource::Managed;
+        base.grobid_image = "custom/grobid:test".to_owned();
+        base.grobid_auto_start = true;
+        base.grobid_container = "my-grobid".to_owned();
+        base.ollama_source = ServiceSource::ExistingContainer;
+        base.ollama_image = "custom/ollama:test".to_owned();
+        base.ollama_auto_start = true;
+        base.ollama_container = "ollama.sycl".to_owned();
+        base.llamacpp_source = ServiceSource::ExistingContainer;
+        base.llamacpp_image = "custom/llamacpp:test".to_owned();
+        base.llamacpp_container = "llama.sycl".to_owned();
+        base.llamacpp_url = "http://gpu-box:9999/v1".to_owned();
+        base.llamacpp_model = "owner/model:Q4_K_M".to_owned();
+        base.llamacpp_args = "--n-gpu-layers all".to_owned();
+        base.llamacpp_auto_start = true;
+
+        let settings = RagSettings::from_layer_paths(Some(&global), &workspace, Some(&base))
+            .expect("layered settings");
+
+        assert_eq!(settings.context_tokens, 16_384, "context size survives");
+        assert_eq!(settings.max_tokens, 4096, "max tokens survive");
+        assert_eq!(settings.temperature, 0.7);
+        assert!(!settings.stream, "the host stream switch survives");
+        assert_eq!(settings.bibliography, "/tmp/library.bib");
+        assert!(settings.rename_pdfs);
+        assert!(settings.openalex);
+        assert!(!settings.resolve_citations);
+        assert_eq!(settings.system_prompt, "Host prompt");
+        assert_eq!(settings.system_prompt_path, "/tmp/host-prompt.md");
+        assert_eq!(settings.memory, MemoryChoice::Off, "the workspace wins");
+        assert!(!settings.hybrid, "the layer extension is read");
+
+        assert_eq!(settings.grobid_source, GrobidSource::Managed);
+        assert_eq!(settings.grobid_image, "custom/grobid:test");
+        assert!(settings.grobid_auto_start);
+        assert_eq!(settings.grobid_container, "my-grobid");
+        assert_eq!(settings.ollama_source, ServiceSource::ExistingContainer);
+        assert_eq!(settings.ollama_image, "custom/ollama:test");
+        assert!(settings.ollama_auto_start);
+        assert_eq!(settings.ollama_container, "ollama.sycl");
+        assert_eq!(settings.llamacpp_source, ServiceSource::ExistingContainer);
+        assert_eq!(settings.llamacpp_image, "custom/llamacpp:test");
+        assert_eq!(settings.llamacpp_container, "llama.sycl");
+        assert_eq!(settings.llamacpp_url, "http://gpu-box:9999/v1");
+        assert_eq!(settings.llamacpp_model, "owner/model:Q4_K_M");
+        assert_eq!(settings.llamacpp_args, "--n-gpu-layers all");
+        assert!(settings.llamacpp_auto_start);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn layers_keep_models_of_inactive_providers() {
+        let root = unique_temp_dir("ragrig-gpui-layer-models");
+        let workspace = root.join("paper/.ragrig/config.json");
+        std::fs::create_dir_all(workspace.parent().expect("workspace parent"))
+            .expect("workspace dir");
+        std::fs::write(&workspace, r#"{"parse":{"chunk_size":256}}"#).expect("layer");
+
+        let mut base = fixture();
+        base.provider = ChatProvider::OpenAi;
+        base.set_model_for(ChatProvider::OpenAi, "gpt-4o-mini");
+        base.set_model_for(ChatProvider::Ollama, "host-ollama");
+        base.set_model_for(ChatProvider::DeepSeek, "host-deepseek");
+
+        let settings =
+            RagSettings::from_layer_paths(None, &workspace, Some(&base)).expect("layered settings");
+        assert_eq!(settings.provider, ChatProvider::OpenAi);
+        assert_eq!(settings.model_for(ChatProvider::OpenAi), "gpt-4o-mini");
+        assert_eq!(
+            settings.model_for(ChatProvider::Ollama),
+            "host-ollama",
+            "the inactive Ollama model survives"
+        );
+        assert_eq!(
+            settings.model_for(ChatProvider::DeepSeek),
+            "host-deepseek",
+            "the inactive DeepSeek model survives"
+        );
+
+        std::fs::write(
+            &workspace,
+            r#"{"chat":{"model":"layer-model","deepseek_model":"layer-deepseek"}}"#,
+        )
+        .expect("layer");
+        let settings =
+            RagSettings::from_layer_paths(None, &workspace, Some(&base)).expect("layered settings");
+        assert_eq!(
+            settings.model_for(ChatProvider::OpenAi),
+            "layer-model",
+            "the layer replaces the active model"
+        );
+        assert_eq!(settings.model_for(ChatProvider::DeepSeek), "layer-deepseek");
+        assert_eq!(
+            settings.model_for(ChatProvider::Ollama),
+            "host-ollama",
+            "the untouched model survives"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_layer_prompt_overrides_the_host_prompt() {
+        let root = unique_temp_dir("ragrig-gpui-layer-prompt");
+        let workspace = root.join("paper/.ragrig/config.json");
+        std::fs::create_dir_all(workspace.parent().expect("workspace parent"))
+            .expect("workspace dir");
+        std::fs::write(root.join("paper/Layer.md"), "Answer as the workspace does.")
+            .expect("prompt");
+        std::fs::write(&workspace, r#"{"chat":{"system_prompt_path":"Layer.md"}}"#).expect("layer");
+
+        let mut base = fixture();
+        base.workspace = root.join("paper").display().to_string();
+        base.system_prompt = "Host prompt".to_owned();
+        base.built_in_prompt = "Host built-in".to_owned();
+
+        let settings =
+            RagSettings::from_layer_paths(None, &workspace, Some(&base)).expect("layered settings");
+        assert!(
+            settings.system_prompt_path.ends_with("paper/Layer.md"),
+            "the layer prompt path is resolved against the workspace: {}",
+            settings.system_prompt_path
+        );
+        assert_eq!(settings.system_prompt, "Answer as the workspace does.");
+
+        std::fs::write(&workspace, r#"{"chat":{"system_prompt_path":null}}"#).expect("layer");
+        let settings =
+            RagSettings::from_layer_paths(None, &workspace, Some(&base)).expect("layered settings");
+        assert_eq!(settings.system_prompt_path, "");
+        assert_eq!(settings.system_prompt, "Host built-in");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn a_prompt_file_overrides_the_inline_prompt() {
         let workspace = unique_temp_dir("ragrig-gpui-prompt-file");
         std::fs::write(workspace.join("Chat.md"), "# Chat\n\nUse the corpus.")
@@ -2032,6 +2211,189 @@ mod tests {
         assert!(settings.save_profile().is_err());
 
         let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn every_profile_field_round_trips() {
+        type Mutation = fn(&mut RagSettings);
+        let mutations: &[(&str, Mutation)] = &[
+            ("provider", |settings| {
+                settings.provider = ChatProvider::DeepSeek
+            }),
+            ("model", |settings| settings.set_model("llama3.1:8b")),
+            ("deepseek model", |settings| {
+                settings.set_model_for(ChatProvider::DeepSeek, "deepseek-chat")
+            }),
+            ("llamacpp url", |settings| {
+                settings.llamacpp_url = "http://gpu-box:9000/v1".to_owned()
+            }),
+            ("temperature", |settings| settings.temperature = 0.9),
+            ("max tokens", |settings| settings.max_tokens = 4096),
+            ("context tokens", |settings| {
+                settings.context_tokens = 16_384
+            }),
+            ("embed model", |settings| {
+                settings.embed_model = "mxbai-embed-large".to_owned()
+            }),
+            ("top k", |settings| settings.top_k = 12),
+            ("similarity threshold", |settings| {
+                settings.similarity_threshold = 0.25
+            }),
+            ("chunk size", |settings| settings.chunk_size = 2048),
+            ("chunk overlap", |settings| settings.chunk_overlap = 64),
+            ("pdf backend", |settings| {
+                settings.pdf_backend = PdfBackend::Internal
+            }),
+            ("sloppy pdf", |settings| settings.sloppy_pdf = true),
+            ("memory strategy", |settings| {
+                settings.memory = MemoryChoice::Summary
+            }),
+            ("memory model", |settings| {
+                settings.memory_model = "qwen3:1.7b".to_owned()
+            }),
+            ("corpus dirs", |settings| {
+                settings.corpus_dirs = vec!["papers=/docs/papers".to_owned()]
+            }),
+        ];
+
+        for (label, mutate) in mutations {
+            let workspace = unique_temp_dir("ragrig-gpui-profile-field");
+            let mut settings = fixture();
+            settings.workspace = workspace.display().to_string();
+            settings.profile_name = "roundtrip".to_owned();
+            mutate(&mut settings);
+            settings.save_profile().expect(label);
+
+            let mut host = fixture();
+            host.workspace = workspace.display().to_string();
+            host.profile_name = "roundtrip".to_owned();
+            host.load_profile("roundtrip").expect(label);
+
+            let saved =
+                serde_json::to_value(settings.to_config().expect(label)).expect("saved config");
+            let loaded =
+                serde_json::to_value(host.to_config().expect(label)).expect("loaded config");
+            assert_eq!(loaded, saved, "{label} did not survive the profile");
+
+            let _ = std::fs::remove_dir_all(workspace);
+        }
+    }
+
+    #[test]
+    fn profile_load_keeps_host_only_settings() {
+        let workspace = unique_temp_dir("ragrig-gpui-profile-host-state");
+        let mut settings = fixture();
+        settings.workspace = workspace.display().to_string();
+        settings.profile_name = "lab".to_owned();
+        settings.context_tokens = 8192;
+        settings.save_profile().expect("save profile");
+
+        let mut host = fixture();
+        host.workspace = workspace.display().to_string();
+        host.bibliography = "/tmp/library.bib".to_owned();
+        host.stream = false;
+        host.hybrid = false;
+        host.rename_pdfs = true;
+        host.openalex = true;
+        host.resolve_citations = false;
+        host.built_in_prompt = "Host prompt".to_owned();
+        host.system_prompt = "Host prompt".to_owned();
+        host.ollama_source = ServiceSource::ExistingContainer;
+        host.ollama_container = "ollama.sycl".to_owned();
+        host.ollama_image = "custom/ollama:test".to_owned();
+        host.ollama_auto_start = true;
+        host.grobid_source = GrobidSource::Managed;
+        host.grobid_container = "my-grobid".to_owned();
+        host.llamacpp_source = ServiceSource::ExistingContainer;
+        host.llamacpp_container = "llama.sycl".to_owned();
+        host.llamacpp_model = "owner/model:Q4_K_M".to_owned();
+        host.llamacpp_args = "--n-gpu-layers all".to_owned();
+        host.llamacpp_auto_start = true;
+
+        host.load_profile("lab").expect("load profile");
+
+        assert_eq!(host.context_tokens, 8192, "the profile's own value wins");
+        assert_eq!(host.bibliography, "/tmp/library.bib");
+        assert!(!host.stream);
+        assert!(!host.hybrid, "the runtime retrieval switch survives");
+        assert!(host.rename_pdfs);
+        assert!(host.openalex);
+        assert!(!host.resolve_citations);
+        assert_eq!(host.system_prompt, "Host prompt");
+        assert_eq!(host.ollama_source, ServiceSource::ExistingContainer);
+        assert_eq!(host.ollama_container, "ollama.sycl");
+        assert_eq!(host.ollama_image, "custom/ollama:test");
+        assert!(host.ollama_auto_start);
+        assert_eq!(host.grobid_source, GrobidSource::Managed);
+        assert_eq!(host.grobid_container, "my-grobid");
+        assert_eq!(host.llamacpp_source, ServiceSource::ExistingContainer);
+        assert_eq!(host.llamacpp_container, "llama.sycl");
+        assert_eq!(host.llamacpp_model, "owner/model:Q4_K_M");
+        assert_eq!(host.llamacpp_args, "--n-gpu-layers all");
+        assert!(host.llamacpp_auto_start);
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn profile_load_keeps_inactive_provider_models() {
+        let workspace = unique_temp_dir("ragrig-gpui-profile-models");
+        let mut settings = fixture();
+        settings.workspace = workspace.display().to_string();
+        settings.provider = ChatProvider::OpenAi;
+        settings.set_model_for(ChatProvider::OpenAi, "gpt-4o-mini");
+        settings.set_model_for(ChatProvider::Ollama, "profile-ollama");
+        settings.profile_name = "cloud".to_owned();
+        settings.save_profile().expect("save profile");
+
+        let mut host = fixture();
+        host.workspace = workspace.display().to_string();
+        host.set_model_for(ChatProvider::Ollama, "host-ollama");
+        host.load_profile("cloud").expect("load profile");
+
+        assert_eq!(host.provider, ChatProvider::OpenAi);
+        assert_eq!(
+            host.model_for(ChatProvider::OpenAi),
+            "gpt-4o-mini",
+            "the profile's active model is loaded"
+        );
+        assert_eq!(
+            host.model_for(ChatProvider::Ollama),
+            "host-ollama",
+            "a model the profile cannot express survives"
+        );
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn profile_defaults_keep_host_only_settings() {
+        let mut settings = fixture();
+        settings.top_k = 3;
+        settings.context_tokens = 32_768;
+        settings.bibliography = "/tmp/library.bib".to_owned();
+        settings.stream = false;
+        settings.hybrid = false;
+        settings.rename_pdfs = true;
+        settings.openalex = true;
+        settings.resolve_citations = false;
+        settings.ollama_source = ServiceSource::ExistingContainer;
+        settings.ollama_container = "ollama.sycl".to_owned();
+        settings.profile_name.clear();
+
+        settings.reset_to_profile_defaults().expect("reset");
+
+        let defaults = RagSettings::default();
+        assert_eq!(settings.top_k, defaults.top_k, "profile fields reset");
+        assert_eq!(settings.context_tokens, defaults.context_tokens);
+        assert_eq!(settings.bibliography, "/tmp/library.bib");
+        assert!(!settings.stream);
+        assert!(!settings.hybrid);
+        assert!(settings.rename_pdfs);
+        assert!(settings.openalex);
+        assert!(!settings.resolve_citations);
+        assert_eq!(settings.ollama_source, ServiceSource::ExistingContainer);
+        assert_eq!(settings.ollama_container, "ollama.sycl");
     }
 
     #[test]
