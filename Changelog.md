@@ -5,13 +5,57 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.9.1 — 2026-11-10
 
 ### Added
 
 - `SidePanel::scroll(false)` lets a host own body scrolling, so an embedded
   virtual list can fill the pane instead of being measured at its full content
   height. The default remains the scrollable panel.
+
+### Quality
+
+Release validation on 2026-11-10 (Cargo 1.99.0, rustc 1.99.0).
+
+**Test coverage.** `cargo llvm-cov --all-features --summary-only` (doctests are
+not measured on stable Rust):
+
+| Metric | Covered | Total | Cover |
+| --- | ---: | ---: | ---: |
+| Regions | 13,871 | 24,201 | 57.32% |
+| Functions | 1,006 | 1,818 | 55.34% |
+| Lines | 8,421 | 15,293 | 55.06% |
+
+The least covered areas are the headless UI surfaces (`src/rag/chat.rs`,
+`src/rag/settings_page.rs`, and `src/services/settings_page.rs`, 0%; they are
+exercised through the example applications), the Docker lifecycle
+(`src/services/managed.rs`, 10.44% lines; the daemon tests are `#[ignore]`d),
+the worker controller (`src/rag/controller.rs`, 12.30%), the onboarding page
+(`src/rag/onboarding.rs`, 28.65%; the step machine, token suggestions, and
+workspace detection are unit-tested, while the GPUI page is exercised through
+Scico), `src/setting_fields.rs` (35.88%), `src/session_picker.rs` (39.74%),
+`src/rag/protocol.rs` (43.59%), and `src/paths.rs` (54.31%; the Linux portal
+branch is not exercised headlessly). The new `SidePanel::scroll` builder is in
+`src/side_panel.rs` (81.82% lines); the gallery exercises the default scrolling
+path, and Scico exercises the non-scrolling path.
+
+**Tests.** `cargo test --all-features`: 195 unit tests (4 ignored), 2 gallery
+tests, 5 spike tests (1 ignored), and 2 doctests — **204 passed, 0 failed, 5
+ignored**. The suite exercises the SidePanel builder alongside the existing
+component, controller, settings, reference, and managed-service tests.
+
+**Checks.** `cargo fmt --check`, `cargo check --all-targets --all-features`,
+`cargo test --all-features`, `cargo clippy --all-targets --all-features -- -D
+warnings`, and `cargo doc --no-deps --all-features` (with
+`RUSTDOCFLAGS="-D warnings"`) are green.
+`cargo package --list --allow-dirty` ships 49 files.
+`cargo publish --dry-run --allow-dirty` packages and verifies ragrig-gpui 0.9.1
+(49 files, 1.2 MiB, 266.8 KiB compressed) and aborts the upload as expected in
+a dry run.
+
+**Publication order.** `ragrig` 1.3.0, `grobid-bibtex` 0.4.0, and the rest of
+the dependency set are already on crates.io. Publish ragrig-gpui 0.9.1 before
+scico 0.7.1, which requires `ragrig-gpui = "^0.9.1"`.
 
 ## v0.9.0 — 2026-11-08
 
