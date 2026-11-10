@@ -23,6 +23,7 @@ pub struct SidePanel {
     toolbar: Option<AnyElement>,
     children: Vec<AnyElement>,
     footer: Option<AnyElement>,
+    scroll: bool,
 }
 
 impl SidePanel {
@@ -39,6 +40,7 @@ impl SidePanel {
             toolbar: None,
             children: Vec::new(),
             footer: None,
+            scroll: true,
         }
     }
 
@@ -66,6 +68,16 @@ impl SidePanel {
     /// Add a footer below the scrollable body.
     pub fn footer(mut self, footer: impl IntoElement) -> Self {
         self.footer = Some(footer.into_any_element());
+        self
+    }
+
+    /// Turn the outer body scroll on or off.
+    ///
+    /// A panel whose child owns a virtual list must turn this off: the outer
+    /// scroller would otherwise measure the list at its full content height
+    /// instead of giving it the remaining viewport height.
+    pub fn scroll(mut self, scroll: bool) -> Self {
+        self.scroll = scroll;
         self
     }
 }
@@ -115,8 +127,12 @@ impl RenderOnce for SidePanel {
             .gap_2()
             .px_3()
             .py_3()
-            .overflow_y_scrollbar()
             .children(self.children);
+        let body = if self.scroll {
+            body.overflow_y_scrollbar().into_any_element()
+        } else {
+            body.into_any_element()
+        };
 
         v_flex()
             .size_full()
