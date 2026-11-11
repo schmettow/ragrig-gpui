@@ -5,6 +5,55 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.9.2 — 2026-11-11
+
+### Fixed
+
+- **A settings rebuild keeps the chat context.** `RagController::apply` now
+  records that the worker's rebuild continues the same conversation, and the
+  new `session_preserves_context()` getter exposes that to hosts. `RagChat`
+  keeps its queued attachments across Apply and clears them only for an
+  explicit New or Load (`src/rag/controller.rs`, `src/rag/chat.rs`).
+- **Queued attachments are named in the transcript.** `RagChat` inserts an
+  `Attached: …` system note between the question and the assistant
+  placeholder, listing every attachment sent with that prompt
+  (`src/rag/chat.rs`).
+- **A pre-built container no longer starves the papers behind it.**
+  `ScicoAttach::merge` reserves the verbatim document, bibliography, and
+  selection containers before splitting the remaining character budget across
+  plain attachments, so a large active document does not silently reduce later
+  papers to zero characters (`src/rag/attach.rs`).
+
+### Quality
+
+Release validation on 2026-11-11 (Cargo 1.99.0, rustc 1.99.0).
+
+**Test coverage.** `cargo llvm-cov --all-features --summary-only` (doctests are
+not measured on stable Rust):
+
+| Metric | Covered | Total | Cover |
+| --- | ---: | ---: | ---: |
+| Regions | 13,966 | 24,332 | 57.40% |
+| Functions | 1,016 | 1,832 | 55.46% |
+| Lines | 8,480 | 15,376 | 55.15% |
+
+`src/rag/attach.rs` is at 96.83% lines; the new fair-share case covers a
+container followed by several papers. `src/rag/chat.rs` (5.95%) and
+`src/rag/controller.rs` (12.14%) stay low because their worker loop cannot run
+under GPUI's deterministic test scheduler: any event sent from the worker
+thread is reported as nondeterministic activity. Those surfaces are exercised
+through the example applications and Scico, and the new note helper is
+unit-tested directly. The remaining gaps are the same headless settings pages,
+Docker lifecycle, and Linux portal branches reported for v0.9.1.
+
+**Tests.** `cargo test --all-features`: 207 passed, 5 ignored (198 lib, 2
+gallery, 5 spike with one measurement ignored, and 2 doctests).
+
+**Checks.** `cargo fmt --check`, `cargo check --all-targets --all-features`,
+`cargo clippy --all-targets --all-features -- -D warnings`,
+`RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, `cargo package
+--list --allow-dirty`, and `cargo publish --dry-run --allow-dirty` all pass.
+
 ## v0.9.1 — 2026-11-10
 
 ### Added

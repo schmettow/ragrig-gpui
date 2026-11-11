@@ -195,6 +195,11 @@ impl RagChat {
             });
         }
         let message = self.chat.update(cx, |chat, cx| chat.begin_assistant(cx));
+        if let Some(note) = attachment_note(&self.attachments) {
+            self.chat.update(cx, |chat, cx| {
+                chat.push_system_before(message, note, cx);
+            });
+        }
         let attachments = std::mem::take(&mut self.attachments);
 
         match self
@@ -331,17 +336,23 @@ impl RagChat {
                 }
             }
             RagEvent::SessionStarted { .. } => {
+                let preserve = self.controller.read(cx).session_preserves_context();
                 self.pending = None;
                 self.streaming = false;
-                self.attachments.clear();
+                if !preserve {
+                    self.attachments.clear();
+                }
                 self.chat.update(cx, |chat, cx| chat.clear(cx));
                 self.composer
                     .update(cx, |composer, cx| composer.set_streaming(false, cx));
             }
             RagEvent::SessionLoaded { turns, .. } => {
+                let preserve = self.controller.read(cx).session_preserves_context();
                 self.pending = None;
                 self.streaming = false;
-                self.attachments.clear();
+                if !preserve {
+                    self.attachments.clear();
+                }
                 self.chat
                     .update(cx, |chat, cx| chat.replace(loaded_messages(turns), cx));
                 self.composer
@@ -460,6 +471,23 @@ impl Render for RagChat {
 
 impl EventEmitter<RagChatEvent> for RagChat {}
 
+/// A one-line transcript note naming the context queued for this question.
+///
+/// The model already receives the attachments through the prompt; the note
+/// makes the round trip visible in the transcript, where otherwise only the
+/// assistant placeholder would appear.
+fn attachment_note(attachments: &[PendingAttachment]) -> Option<String> {
+    if attachments.is_empty() {
+        return None;
+    }
+    let labels = attachments
+        .iter()
+        .map(|attachment| attachment.label.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!("Attached: {labels}"))
+}
+
 #[cfg(feature = "grobid")]
 fn citation_note(resolved: &[CitationAttachment], missed: &[String]) -> Option<String> {
     if resolved.is_empty() && missed.is_empty() {
@@ -498,4 +526,29 @@ fn loaded_messages(turns: Vec<SessionTurn>) -> Vec<NewMessage> {
             ChatRole::System => NewMessage::system(turn.text),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::attachment_note;
+
+    fn attachment(id: &str, label: &str) -> crate::rag::PendingAttachment {
+        crate::rag::PendingAttachment::text(id, label, "body")
+    }
+
+    #[test]
+    fn the_note_lists_every_attachment_in_order() {
+        assert_eq!(
+            attachment_note(&[
+                attachment("file-1", "@Kano2025"),
+                attachment("text-2", "draft.md")
+            ]),
+            Some("Attached: @Kano2025, draft.md".to_owned())
+        );
+    }
+
+    #[test]
+    fn an_empty_queue_needs_no_note() {
+        assert_eq!(attachment_note(&[]), None);
+    }
 }

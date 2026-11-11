@@ -35,6 +35,9 @@ pub struct RagController {
     memory_enabled: bool,
     /// Whether hybrid retrieval (embeddings) is on.
     hybrid: bool,
+    /// Whether the agent was rebuilt by [`apply`](Self::apply) rather than a
+    /// session command, so hosts should keep their pending context.
+    session_preserves_context: bool,
     ingest: Option<IngestProgress>,
     sync_request: Option<RequestId>,
     busy: bool,
@@ -90,6 +93,7 @@ impl RagController {
             agent: None,
             memory_enabled,
             hybrid,
+            session_preserves_context: false,
             ingest: None,
             sync_request: None,
             busy: false,
@@ -165,11 +169,13 @@ impl RagController {
 
     /// Start an empty conversation.
     pub fn new_session(&mut self, cx: &mut Context<Self>) {
+        self.session_preserves_context = false;
         self.send_quiet(RagCommand::NewSession, cx);
     }
 
     /// Continue a saved conversation.
     pub fn load_session(&mut self, id: impl Into<String>, cx: &mut Context<Self>) {
+        self.session_preserves_context = false;
         self.send_quiet(RagCommand::LoadSession { id: id.into() }, cx);
     }
 
@@ -250,6 +256,10 @@ impl RagController {
 
     /// Rebuild the agent with new configuration.
     pub fn apply(&mut self, setup: RagSetup, cx: &mut Context<Self>) {
+        // The rebuild reloads the same conversation. Hosts must keep their
+        // pending attachments and selections instead of treating the
+        // resulting session event as a switch.
+        self.session_preserves_context = true;
         self.memory_enabled = setup.memory_enabled();
         self.hybrid = setup.hybrid;
         self.agent = None;
@@ -389,6 +399,24 @@ impl RagController {
     /// Whether hybrid retrieval (embeddings) is on.
     pub fn hybrid(&self) -> bool {
         self.hybrid
+    }
+
+    /// Whether the session event now arriving belongs to a settings rebuild.
+    ///
+    /// Set by [`apply`](Self::apply) and cleared by [`new_session`](Self::new_session)
+    /// and [`load_session`](Self::load_session). Hosts consult this while
+    /// handling [`RagEvent::SessionStarted`] or [`RagEvent::SessionLoaded`]:
+    /// when it is `true`, the rebuild continues the same conversation, so
+    /// queued attachments, marked selections, and armed edit targets stay.
+    /// When it is `false`, the user switched conversations and the pending
+    /// context belongs to the old one.
+    ///
+    /// The flag deliberately stays set until the next New or Load: GPUI
+    /// delivers emitted events after the controller update returns, so
+    /// clearing it in [`on_event`](Self::on_event) would hide the decision
+    /// from the subscribers that need it.
+    pub fn session_preserves_context(&self) -> bool {
+        self.session_preserves_context
     }
 
     /// Pipeline components for [`AgentBar`](crate::AgentBar).

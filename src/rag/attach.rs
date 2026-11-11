@@ -86,22 +86,36 @@ impl AttachStrategy for ScicoAttach {
         let mut context = String::new();
         if !attachments.is_empty() {
             context.push_str("<scico:v1:context source=\"creator\">\n");
-            let mut remaining = self.attachment_budget();
-            let share = remaining / attachments.len();
-            for (index, attachment) in attachments.iter().enumerate() {
+            // Pre-built containers pass through verbatim, so reserve their
+            // full length before splitting the rest. Dividing the untouched
+            // budget by every attachment let a full document buffer consume
+            // the share of the papers queued behind it, silently reducing
+            // them to zero characters.
+            let reserved: usize = attachments
+                .iter()
+                .filter(|attachment| is_container(&attachment.content))
+                .map(|attachment| attachment.content.trim_end().chars().count())
+                .sum();
+            let plain = attachments
+                .iter()
+                .filter(|attachment| !is_container(&attachment.content))
+                .count();
+            let mut remaining = self.attachment_budget().saturating_sub(reserved);
+            let share = remaining / plain.max(1);
+            let mut plain_seen = 0usize;
+            for attachment in attachments {
                 // A pre-built protocol container (the document buffer, the
                 // bibliography, a marked selection) is inserted verbatim: the
                 // host already attached the attributes the prompt documents
                 // (cursor, range, digest), and wrapping it again would hide
                 // them inside a second `document` element.
                 if is_container(&attachment.content) {
-                    let content = attachment.content.trim_end();
-                    remaining = remaining.saturating_sub(content.chars().count());
-                    context.push_str(content);
+                    context.push_str(attachment.content.trim_end());
                     context.push('\n');
                     continue;
                 }
-                let limit = if index + 1 == attachments.len() {
+                plain_seen += 1;
+                let limit = if plain_seen == plain {
                     remaining
                 } else {
                     share.min(remaining)
@@ -271,5 +285,41 @@ mod tests {
         assert!(merged.contains(">SHORT</scico:v1:document>"));
         // The unused attachment share does not starve retrieval.
         assert!(merged.contains(&"r".repeat(90)));
+    }
+
+    #[test]
+    fn papers_queued_after_a_container_share_the_remaining_budget() {
+        // 1,024 reserved + 100 context tokens at three characters each, so
+        // 210 characters for explicit attachments.
+        let container = format!(
+            "<scico:v1:document name=\"paper.md\">{}</scico:v1:document>",
+            "d".repeat(40)
+        );
+        let reserved = container.chars().count();
+        let expected = (210 - reserved) / 4;
+        assert!(expected > 0, "the fixture must leave room for the papers");
+
+        let papers = (0..4)
+            .map(|index| document(&format!("@Paper{index}"), &"p".repeat(300)))
+            .collect::<Vec<_>>();
+        let mut attachments = vec![document("paper.md", &container)];
+        attachments.extend(papers);
+        let merged = ScicoAttach::with_context_tokens(1124).merge("", &attachments);
+
+        for index in 0..4 {
+            let marker = format!("name=\"@Paper{index}\">");
+            let body = merged
+                .split_once(&marker)
+                .unwrap_or_else(|| panic!("paper {index} missing: {merged}"))
+                .1
+                .split_once("<scico:v1:truncated")
+                .unwrap_or_else(|| panic!("paper {index} has no marker: {merged}"))
+                .0;
+            assert!(
+                body.chars().count() >= expected,
+                "paper {index} received {} of at least {expected} characters",
+                body.chars().count()
+            );
+        }
     }
 }
