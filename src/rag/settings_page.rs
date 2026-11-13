@@ -28,8 +28,8 @@ use gpui_kit::{
 };
 
 use super::{
-    ChatProvider, MemoryChoice, PdfBackend, RagChanges, RagController, RagField, RagSection,
-    RagSettings,
+    ChatProvider, EmbedProvider, MemoryChoice, PdfBackend, RagChanges, RagController, RagField,
+    RagSection, RagSettings,
 };
 use crate::{
     SettingRow, dirty_color, dirty_header, dropdown_control, number_control, path_control,
@@ -413,12 +413,49 @@ fn retrieval_group(
         |settings, value| settings.hybrid = value,
     )
     .description("BM25 plus embeddings. Off skips vector search and needs no embedding model.");
+    let embed_options: Vec<(SharedString, SharedString)> = EmbedProvider::options()
+        .iter()
+        .map(|(provider, label)| {
+            (
+                SharedString::from(provider.label()),
+                SharedString::from(*label),
+            )
+        })
+        .collect();
+    let embed_provider = dropdown_row(
+        settings,
+        changes,
+        spec(
+            "rag-embed-provider",
+            RagField::EmbedProvider,
+            "Embedding provider",
+        ),
+        move |_| embed_options.clone(),
+        |settings| settings.embed_provider.label().to_owned(),
+        |settings, value| {
+            if let Some(provider) = EmbedProvider::from_label(&value) {
+                settings.set_embed_provider(provider);
+            }
+        },
+    )
+    .description(format!(
+        "Keys: {}. llama.cpp reads LLAMACPP_API_BASE_URL and optionally LLAMACPP_API_KEY; a missing key is reported when the agent starts.",
+        EmbedProvider::options()
+            .iter()
+            .filter(|(provider, _)| provider.key_required())
+            .filter_map(|(provider, _)| provider.env_var())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
     let embed_model = text_row(
         settings,
         changes,
         spec("rag-embed-model", RagField::EmbedModel, "Embedding model"),
         |settings| settings.embed_model.clone(),
         |settings, value| settings.embed_model = value,
+    )
+    .description(
+        "Switching providers fills in that provider's default unless a custom model is set.",
     );
     let top_k = number_row(
         settings,
@@ -470,6 +507,7 @@ fn retrieval_group(
         SettingGroup::new()
             .title(group_title("Retrieval", now.section(RagSection::Retrieval)))
             .item(hybrid.into_item())
+            .item(embed_provider.into_item())
             .item(embed_model.into_item())
             .item(top_k.into_item())
             .item(threshold.into_item())

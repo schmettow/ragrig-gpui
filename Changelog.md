@@ -5,7 +5,28 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.9.2 — 2026-11-11
+## v0.9.2 — 2026-11-13
+
+### Added
+
+- **Cloud embedding providers.** `EmbedProvider` adds OpenAI, Mistral,
+  OpenRouter, and llama.cpp embeddings alongside Ollama, backed by Ragrig
+  1.4's `EmbedderSpec::Cloud`. The Retrieval group gains an **Embedding
+  provider** dropdown next to **Embedding model**; switching providers fills in
+  that provider's default model unless a custom model is set. Keys come from
+  `OPENAI_API_KEY`, `MISTRAL_API_KEY`, and `OPENROUTER_API_KEY`; llama.cpp
+  embeddings read `LLAMACPP_API_BASE_URL` and the optional `LLAMACPP_API_KEY`
+  (`src/rag/config.rs`, `src/rag/settings_page.rs`).
+- `RagSettings::embed_provider`, `EmbedProvider`, `EmbedProvider::env_var`,
+  `EmbedProvider::key_required`, and `EmbedProvider::default_model` are
+  exported through the crate root and prelude.
+
+### Changed
+
+- The `ragrig` dependency moves from 1.3 to 1.4 to pick up the cloud embedder
+  (`Cargo.toml`). Profiles no longer contain empty `deepseek_api_key` and
+  `llamacpp_api_key` slots; Ragrig removes those keys because credentials are
+  environment-only (`src/rag/config.rs`).
 
 ### Fixed
 
@@ -26,18 +47,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Quality
 
-Release validation on 2026-11-11 (Cargo 1.99.0, rustc 1.99.0).
+Release validation on 2026-11-13 (Cargo 1.99.0, rustc 1.99.0).
 
 **Test coverage.** `cargo llvm-cov --all-features --summary-only` (doctests are
 not measured on stable Rust):
 
 | Metric | Covered | Total | Cover |
 | --- | ---: | ---: | ---: |
-| Regions | 13,966 | 24,332 | 57.40% |
-| Functions | 1,016 | 1,832 | 55.46% |
-| Lines | 8,480 | 15,376 | 55.15% |
+| Regions | 14,087 | 24,521 | 57.45% |
+| Functions | 1,027 | 1,853 | 55.42% |
+| Lines | 8,566 | 15,516 | 55.21% |
 
-`src/rag/attach.rs` is at 96.83% lines; the new fair-share case covers a
+`src/rag/config.rs` is at 91.01% lines; the new provider conversion,
+default-model, profile round-trip, and dirty-tracking cases run there.
+`src/rag/attach.rs` is at 96.83% lines, with the fair-share case covering a
 container followed by several papers. `src/rag/chat.rs` (5.95%) and
 `src/rag/controller.rs` (12.14%) stay low because their worker loop cannot run
 under GPUI's deterministic test scheduler: any event sent from the worker
@@ -46,7 +69,7 @@ through the example applications and Scico, and the new note helper is
 unit-tested directly. The remaining gaps are the same headless settings pages,
 Docker lifecycle, and Linux portal branches reported for v0.9.1.
 
-**Tests.** `cargo test --all-features`: 207 passed, 5 ignored (198 lib, 2
+**Tests.** `cargo test --all-features`: 210 passed, 5 ignored (201 lib, 2
 gallery, 5 spike with one measurement ignored, and 2 doctests).
 
 **Checks.** `cargo fmt --check`, `cargo check --all-targets --all-features`,

@@ -147,6 +147,110 @@ impl From<Provider> for ChatProvider {
     }
 }
 
+/// Embedding backend offered by the settings page.
+///
+/// DeepSeek and Anthropic expose no embeddings API, so they are not offered
+/// here. Remote backends read their credential from the environment; see
+/// [`env_var`](Self::env_var).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum EmbedProvider {
+    /// Local Ollama server.
+    #[default]
+    Ollama,
+    /// Local llama.cpp `llama-server` `/v1/embeddings`; optional key from
+    /// `LLAMACPP_API_KEY`.
+    LlamaCpp,
+    /// OpenAI `/v1/embeddings`; the key comes from `OPENAI_API_KEY`.
+    OpenAi,
+    /// Mistral `/v1/embeddings`; the key comes from `MISTRAL_API_KEY`.
+    Mistral,
+    /// OpenRouter `/api/v1/embeddings`; the key comes from
+    /// `OPENROUTER_API_KEY`.
+    OpenRouter,
+}
+
+impl EmbedProvider {
+    /// Human-readable name.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ollama => "Ollama",
+            Self::LlamaCpp => "llama.cpp",
+            Self::OpenAi => "OpenAI",
+            Self::Mistral => "Mistral",
+            Self::OpenRouter => "OpenRouter",
+        }
+    }
+
+    /// The environment variable holding this provider's API key.
+    ///
+    /// `None` for the local Ollama server. `llama.cpp` authenticates
+    /// optionally, so its variable is only needed for a secured server.
+    pub fn env_var(self) -> Option<&'static str> {
+        match self {
+            Self::Ollama => None,
+            Self::LlamaCpp => Some("LLAMACPP_API_KEY"),
+            Self::OpenAi => Some("OPENAI_API_KEY"),
+            Self::Mistral => Some("MISTRAL_API_KEY"),
+            Self::OpenRouter => Some("OPENROUTER_API_KEY"),
+        }
+    }
+
+    /// Whether requests fail without an API key.
+    pub fn key_required(self) -> bool {
+        matches!(self, Self::OpenAi | Self::Mistral | Self::OpenRouter)
+    }
+
+    /// The model used when the settings hold no explicit choice.
+    pub fn default_model(self) -> &'static str {
+        EmbeddingProvider::from(self).default_model()
+    }
+
+    /// Options for a dropdown.
+    pub fn options() -> &'static [(Self, &'static str)] {
+        &[
+            (Self::Ollama, "Ollama"),
+            (Self::LlamaCpp, "llama.cpp"),
+            (Self::OpenAi, "OpenAI"),
+            (Self::Mistral, "Mistral"),
+            (Self::OpenRouter, "OpenRouter"),
+        ]
+    }
+
+    /// Find the provider with the given dropdown label.
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::options()
+            .iter()
+            .find(|(_, known)| *known == label)
+            .map(|(provider, _)| *provider)
+    }
+}
+
+impl From<EmbedProvider> for EmbeddingProvider {
+    fn from(provider: EmbedProvider) -> Self {
+        match provider {
+            EmbedProvider::Ollama => Self::Ollama,
+            EmbedProvider::LlamaCpp => Self::LlamaCpp,
+            EmbedProvider::OpenAi => Self::OpenAi,
+            EmbedProvider::Mistral => Self::Mistral,
+            EmbedProvider::OpenRouter => Self::OpenRouter,
+        }
+    }
+}
+
+impl From<EmbeddingProvider> for EmbedProvider {
+    fn from(provider: EmbeddingProvider) -> Self {
+        match provider {
+            EmbeddingProvider::OpenAi => Self::OpenAi,
+            EmbeddingProvider::Mistral => Self::Mistral,
+            EmbeddingProvider::OpenRouter => Self::OpenRouter,
+            EmbeddingProvider::LlamaCpp => Self::LlamaCpp,
+            // Ollama, the feature-gated Fastembed backend, and future
+            // providers this host does not expose all use the local default.
+            _ => Self::Ollama,
+        }
+    }
+}
+
 /// PDF backend offered by the settings page.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PdfBackend {
@@ -404,7 +508,9 @@ pub struct RagSettings {
     pub built_in_prompt: String,
     /// Stream tokens into the transcript.
     pub stream: bool,
-    /// Ollama embedding model.
+    /// Active embedding backend.
+    pub embed_provider: EmbedProvider,
+    /// Embedding model for the selected backend.
     pub embed_model: String,
     /// Hybrid retrieval (BM25 + embeddings). Off runs without an embedding
     /// model and skips vector search.
@@ -510,6 +616,8 @@ pub enum RagField {
     Stream,
     /// System prompt.
     SystemPrompt,
+    /// Embedding backend.
+    EmbedProvider,
     /// Embedding model.
     EmbedModel,
     /// Hybrid retrieval.
@@ -583,7 +691,8 @@ impl RagField {
             | Self::ContextTokens
             | Self::Stream
             | Self::SystemPrompt => RagSection::Chat,
-            Self::EmbedModel
+            Self::EmbedProvider
+            | Self::EmbedModel
             | Self::Hybrid
             | Self::TopK
             | Self::SimilarityThreshold
@@ -751,6 +860,23 @@ impl RagSettings {
         self.models.insert(provider, model.into());
     }
 
+    /// Switch the embedding backend.
+    ///
+    /// A model that is empty or still the previous backend's default follows
+    /// the new backend; a custom identifier is kept so it is not lost while
+    /// the author edits the field.
+    pub fn set_embed_provider(&mut self, provider: EmbedProvider) {
+        if provider == self.embed_provider {
+            return;
+        }
+        let follows = self.embed_model.trim().is_empty()
+            || self.embed_model.trim() == self.embed_provider.default_model();
+        self.embed_provider = provider;
+        if follows {
+            self.embed_model = provider.default_model().to_owned();
+        }
+    }
+
     fn default_models() -> BTreeMap<ChatProvider, String> {
         ChatProvider::options()
             .iter()
@@ -787,6 +913,10 @@ impl RagSettings {
             self.system_prompt != applied.system_prompt
                 || self.system_prompt_path != applied.system_prompt_path,
             RagField::SystemPrompt,
+        );
+        changes.mark_if(
+            self.embed_provider != applied.embed_provider,
+            RagField::EmbedProvider,
         );
         changes.mark_if(
             self.embed_model != applied.embed_model,
@@ -984,6 +1114,7 @@ impl RagSettings {
             system_prompt_path,
             built_in_prompt: default_prompt(),
             stream: true,
+            embed_provider: config.embed.provider.clone().into(),
             embed_model: config.embed.model.clone(),
             hybrid: true,
             top_k: config.embed.top_k,
@@ -1212,7 +1343,7 @@ impl RagSettings {
         };
 
         let embed = EmbedConfig {
-            provider: EmbeddingProvider::Ollama,
+            provider: self.embed_provider.into(),
             model: self.embed_model.trim().to_owned(),
             top_k: self.top_k,
             similarity_threshold: self.similarity_threshold,
@@ -1340,7 +1471,10 @@ impl RagSettings {
         }
         if self.hybrid {
             if self.embed_model.trim().is_empty() {
-                return Err("choose an embedding model".to_owned());
+                return Err(format!(
+                    "choose a {} embedding model",
+                    self.embed_provider.label()
+                ));
             }
             if self.top_k == 0 {
                 return Err("top-k must be at least 1".to_owned());
@@ -1606,6 +1740,51 @@ mod tests {
         let mut settings = fixture();
         settings.resolve_citations = false;
         assert!(!settings.to_setup().expect("valid setup").resolve_citations);
+    }
+
+    #[test]
+    fn switching_the_embedding_provider_follows_its_default_model() {
+        let mut settings = fixture();
+        assert_eq!(settings.embed_provider, EmbedProvider::Ollama);
+
+        settings.set_embed_provider(EmbedProvider::OpenAi);
+        assert_eq!(settings.embed_model, EmbedProvider::OpenAi.default_model());
+        assert_eq!(
+            settings.to_config().expect("config").embed.provider,
+            EmbeddingProvider::OpenAi
+        );
+
+        settings.embed_model = "mxbai-embed-large".to_owned();
+        settings.set_embed_provider(EmbedProvider::Mistral);
+        assert_eq!(
+            settings.embed_model, "mxbai-embed-large",
+            "a custom model survives a provider switch"
+        );
+    }
+
+    #[test]
+    fn every_embedding_provider_matches_the_ragrig_spec() {
+        for (provider, _) in EmbedProvider::options() {
+            let backend = EmbeddingProvider::from(*provider);
+            assert_eq!(EmbedProvider::from(backend.clone()), *provider);
+            assert_eq!(provider.default_model(), backend.default_model());
+            assert!(!provider.default_model().trim().is_empty());
+        }
+    }
+
+    #[test]
+    fn from_config_keeps_the_cloud_embedding_provider() {
+        let mut config = RagrigConfig::default();
+        config.embed.provider = EmbeddingProvider::OpenRouter;
+        config.embed.model = "openai/text-embedding-3-large".to_owned();
+
+        let settings = RagSettings::from_config(&config);
+        assert_eq!(settings.embed_provider, EmbedProvider::OpenRouter);
+        assert_eq!(settings.embed_model, "openai/text-embedding-3-large");
+        assert_eq!(
+            settings.to_config().expect("config").embed.provider,
+            EmbeddingProvider::OpenRouter
+        );
     }
 
     #[test]
@@ -2178,7 +2357,7 @@ mod tests {
     }
 
     #[test]
-    fn profiles_round_trip_prompt_and_api_key_slot() {
+    fn profiles_round_trip_prompt_and_strip_api_keys() {
         let workspace = unique_temp_dir("ragrig-gpui-profile");
         let mut settings = fixture();
         settings.workspace = workspace.display().to_string();
@@ -2191,7 +2370,9 @@ mod tests {
         let path = workspace.join(".ragrig/profiles/lab.json");
         let json = std::fs::read_to_string(&path).expect("profile file");
         assert!(!json.contains("sk-"));
-        assert!(json.contains("\"deepseek_api_key\": null"));
+        // Ragrig 1.4 removes the key slots entirely instead of writing nulls.
+        assert!(!json.contains("deepseek_api_key"));
+        assert!(!json.contains("llamacpp_api_key"));
         assert!(json.contains("lab.prompt.md"));
         assert_eq!(
             std::fs::read_to_string(workspace.join(".ragrig/profiles/lab.prompt.md"))
@@ -2231,6 +2412,9 @@ mod tests {
             ("max tokens", |settings| settings.max_tokens = 4096),
             ("context tokens", |settings| {
                 settings.context_tokens = 16_384
+            }),
+            ("embed provider", |settings| {
+                settings.set_embed_provider(EmbedProvider::OpenAi)
             }),
             ("embed model", |settings| {
                 settings.embed_model = "mxbai-embed-large".to_owned()
@@ -2528,6 +2712,9 @@ mod tests {
             }),
             (RagField::SystemPrompt, |settings| {
                 settings.system_prompt.push_str(" Be terse.")
+            }),
+            (RagField::EmbedProvider, |settings| {
+                settings.embed_provider = EmbedProvider::OpenAi
             }),
             (RagField::EmbedModel, |settings| {
                 settings.embed_model.push_str("-alt")

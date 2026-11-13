@@ -413,8 +413,8 @@ impl RagController {
     ///
     /// The flag deliberately stays set until the next New or Load: GPUI
     /// delivers emitted events after the controller update returns, so
-    /// clearing it in [`on_event`](Self::on_event) would hide the decision
-    /// from the subscribers that need it.
+    /// clearing it in `on_event` would hide the decision from the subscribers
+    /// that need it.
     pub fn session_preserves_context(&self) -> bool {
         self.session_preserves_context
     }

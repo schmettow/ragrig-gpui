@@ -26,8 +26,8 @@ pub use chat::{RagChat, RagChatEvent};
 pub use config::{
     ChatProvider, DEFAULT_GROBID_CONTAINER, DEFAULT_GROBID_IMAGE, DEFAULT_GROBID_URL,
     DEFAULT_LLAMACPP_CONTAINER, DEFAULT_LLAMACPP_IMAGE, DEFAULT_OLLAMA_CONTAINER,
-    DEFAULT_OLLAMA_IMAGE, GrobidSource, MemoryChoice, PdfBackend, RagChanges, RagField, RagSection,
-    RagSettings, RagSetup, ServiceSource,
+    DEFAULT_OLLAMA_IMAGE, EmbedProvider, GrobidSource, MemoryChoice, PdfBackend, RagChanges,
+    RagField, RagSection, RagSettings, RagSetup, ServiceSource,
 };
 pub use controller::RagController;
 #[cfg(feature = "managed")]

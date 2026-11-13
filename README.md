@@ -141,7 +141,11 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
   container controls. The provider dropdown covers Ollama, llama.cpp, DeepSeek,
   OpenAI, Claude, Mistral, and OpenRouter; the single **Model** row follows the
   selected provider and remembers each provider's model, and the **llama.cpp
-  URL** row points the local connector at its `llama-server`. The system prompt
+  URL** row points the local connector at its `llama-server`. The
+  **Embedding provider** row covers Ollama, llama.cpp, OpenAI, Mistral, and
+  OpenRouter; remote credentials come from `OPENAI_API_KEY`,
+  `MISTRAL_API_KEY`, and `OPENROUTER_API_KEY`, while llama.cpp embeddings read
+  `LLAMACPP_API_BASE_URL` and its optional key. The system prompt
   is a Markdown file: an empty path uses the host's compiled-in prompt, and a
   host can add **Open prompt**, **Export**, and **Use built-in** actions with
   `PromptActions`. Workspace, bibliography, and prompt have **Browse…**
@@ -256,6 +260,9 @@ ragrig-gpui
   Apply is explicit. `rag_model_page(settings, changes, prompt, cx)` exposes
   the Chat/Retrieval/Parsing/Memory groups; pass `Some(PromptActions)` for
   host-owned open/export buttons or `None` for the path field alone.
+  `RagSettings::embed_provider` selects Ollama, llama.cpp, OpenAI, Mistral, or
+  OpenRouter embeddings, and `set_embed_provider` fills in the provider's
+  default model when the field still holds the previous default.
   `rag_references_group(settings, changes)` can be added to a host's Library
   page; hosts that show `external_services_page` use
   `rag_reference_processing_group` instead to avoid a duplicate server URL.

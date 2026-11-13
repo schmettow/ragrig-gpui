@@ -24,11 +24,11 @@ pub use crate::{
 pub use crate::rag::{
     AgentInfo, AttachmentSource, Changes, ChatProvider, DEFAULT_GROBID_CONTAINER,
     DEFAULT_GROBID_IMAGE, DEFAULT_GROBID_URL, DEFAULT_LLAMACPP_CONTAINER, DEFAULT_LLAMACPP_IMAGE,
-    DEFAULT_OLLAMA_CONTAINER, DEFAULT_OLLAMA_IMAGE, ExportPrompt, GrobidSource, IngestPhase,
-    IngestProgress, LibraryDocument, LibrarySnapshot, MemoryChoice, OpenPrompt, PdfBackend,
-    PendingAttachment, PromptActions, RagChanges, RagChat, RagChatEvent, RagCommand, RagController,
-    RagEvent, RagField, RagReply, RagSection, RagSettings, RagSetup, RequestId, ScicoAttach,
-    ServiceSource, SessionInfo, SessionTurn, SyncSummary, no_changes, rag_model_page,
+    DEFAULT_OLLAMA_CONTAINER, DEFAULT_OLLAMA_IMAGE, EmbedProvider, ExportPrompt, GrobidSource,
+    IngestPhase, IngestProgress, LibraryDocument, LibrarySnapshot, MemoryChoice, OpenPrompt,
+    PdfBackend, PendingAttachment, PromptActions, RagChanges, RagChat, RagChatEvent, RagCommand,
+    RagController, RagEvent, RagField, RagReply, RagSection, RagSettings, RagSetup, RequestId,
+    ScicoAttach, ServiceSource, SessionInfo, SessionTurn, SyncSummary, no_changes, rag_model_page,
     rag_reference_processing_group, rag_references_group, rag_settings, rag_settings_page,
 };
 
