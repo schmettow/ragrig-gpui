@@ -105,7 +105,7 @@ impl RenderOnce for AgentBar {
                     .icon(IconName::Settings)
                     .ghost()
                     .small()
-                    .tooltip("Agent settings")
+                    .tooltip("Scico settings")
                     .on_click(move |_, window, cx| {
                         if let Some(handler) = &settings_handler {
                             handler(AgentBarEvent::OpenSettings, window, cx);

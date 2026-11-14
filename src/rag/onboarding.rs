@@ -657,7 +657,7 @@ fn ollama_chat_group(settings: &Entity<RagSettings>) -> SettingGroup {
     SettingGroup::new()
         .title("Local chat with Ollama")
         .description(
-            "The Ollama server from step 1 serves this model too. Use Pull models on the Ollama group to fetch it; a missing model is reported in Chat when the agent starts.",
+            "The Ollama server from step 1 serves this model too. Use Pull models on the Ollama group to fetch it; a missing model is reported in Scico when it starts.",
         )
         .item(SettingItem::render(move |_, _, cx| {
             let settings = settings.read(cx);

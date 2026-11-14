@@ -124,6 +124,23 @@ pub enum RagCommand {
         /// Folder scanned recursively for supported documents.
         folder: PathBuf,
     },
+    /// Discard the workspace index and rebuild every configured corpus with
+    /// the current embedding model.
+    ReindexCorpus {
+        /// Correlates the ingestion events.
+        id: RequestId,
+        /// Corpus to report in the summary; the other corpora are rebuilt too.
+        name: String,
+        /// Folder scanned recursively for supported documents.
+        folder: PathBuf,
+    },
+    /// Remove indexed documents from a corpus without re-embedding.
+    ForgetDocuments {
+        /// Corpus identity recorded in chunk provenance.
+        corpus: String,
+        /// Document names (file names) to drop.
+        documents: Vec<String>,
+    },
     /// Stop a running ingestion.
     StopSync {
         /// The ingestion to stop.
@@ -318,6 +335,13 @@ pub struct AgentInfo {
     pub embed_backend: String,
     /// Embedding model in use.
     pub embed_model: String,
+    /// Embedding model recorded in the workspace index, when one exists.
+    pub index_embed_model: Option<String>,
+    /// Vector dimensions recorded in the workspace index, when known.
+    pub index_embed_dims: Option<usize>,
+    /// Whether the workspace index was built with a different embedding
+    /// model than the one in use. Re-index the workspace to resolve it.
+    pub embedding_mismatch: bool,
     /// Whether hybrid retrieval (embeddings) is enabled.
     pub hybrid: bool,
     /// Memory strategy description.

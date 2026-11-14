@@ -5,6 +5,52 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.11.0 — 2026-11-14
+
+### Added
+
+- **Workspace embedding diagnostics.** `AgentInfo` now carries the embedding
+  model and dimensions recorded in the workspace index (`index_embed_model`,
+  `index_embed_dims`) and flags a model change with `embedding_mismatch`. The
+  worker compares the index manifest and the store's embedder guard
+  (`src/rag/protocol.rs`, `src/rag/actor.rs`).
+- **Full re-index.** `RagController::reindex_corpus` sends
+  `RagCommand::ReindexCorpus`: it discards the vector-store artifacts, rebuilds
+  the agent, restores the current conversation, and re-embeds every configured
+  corpus with the current embedder. This is the recovery path for an
+  `EmbeddingMismatch` (`src/rag/controller.rs`, `src/rag/actor.rs`).
+- **Targeted document removal.** `RagController::forget_documents` sends
+  `RagCommand::ForgetDocuments` to drop named documents from one corpus in the
+  vector store, without re-embedding (`src/rag/protocol.rs`,
+  `src/rag/actor.rs`).
+- **Batch delete.** `ReferenceAction::Delete` and a red **Delete** button in
+  `ReferenceSelectionBar`; the host removes the papers and bibliography
+  entries (`src/references.rs`).
+- **BibTeX removal helper.** `editor::remove_bibtex_entry(text, key)` removes a
+  whole entry, including parentheses-delimited and braced values, and cleans up
+  the surrounding whitespace (`src/editor/bibtex.rs`).
+- **Align with workspace.** The Retrieval settings group gains an **Align with
+  workspace** button and `RagSettings::align_embed_model_with` copies the model
+  recorded in the index back into the form; a matching provider default is
+  selected too (`src/rag/settings_page.rs`, `src/rag/config.rs`).
+
+### Changed
+
+- **Breaking:** `rag_model_page` now takes the `Entity<RagController>` and shows
+  the workspace-embedding row (`src/rag/settings_page.rs`).
+- The default `ChatIdentity` name is **Scico**; settings wording names the
+  application instead of the Ragrig engine (`src/chat_view.rs`,
+  `src/rag/settings_page.rs`, `src/rag/onboarding.rs`).
+- Sync errors no longer rely on downcasting for cancellation; the worker's
+  cancel token decides between `SyncStopped` and `SyncFailed`
+  (`src/rag/actor.rs`).
+
+### Quality
+
+Focused tests cover entry removal and surrounding whitespace, the red Delete
+bar action, workspace/provider alignment, and embedding-state detection. Full
+release checks are reported with the Scico 0.10.1 validation run.
+
 ## v0.10.0 — 2026-11-14
 
 ### Changed

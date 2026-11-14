@@ -1015,6 +1015,9 @@ pub enum ReferenceAction {
     CopyPaths,
     /// Attach the selected papers to the next question. The host does this.
     Attach,
+    /// Delete the selected papers from the corpus and the bibliography. The
+    /// host does this.
+    Delete,
     /// Drop the selection. The host does this.
     Clear,
 }
@@ -1024,10 +1027,10 @@ type ActionHandler = Rc<dyn Fn(ReferenceAction, &[ReferenceEntry], &mut Window, 
 /// One floating bar for a multi-selection of references.
 ///
 /// The bar writes **Copy @keys** and **Copy paths** itself. **Insert**,
-/// **Attach**, and **Clear** are shown only when a host action handler is
-/// installed; the host owns the selection, the editor, and the chat, so it
-/// performs those actions. Build the bar from the selected entries in list
-/// order and give it a stable parent.
+/// **Attach**, **Delete**, and **Clear** are shown only when a host action
+/// handler is installed; the host owns the selection, the editor, and the
+/// chat, so it performs those actions. Build the bar from the selected entries
+/// in list order and give it a stable parent.
 #[derive(IntoElement)]
 pub struct ReferenceSelectionBar {
     entries: Vec<ReferenceEntry>,
@@ -1167,6 +1170,26 @@ impl RenderOnce for ReferenceSelectionBar {
                             handler(ReferenceAction::Attach, &attach_entries, window, cx);
                         }
                     }),
+            );
+            let delete_handler = handler.clone();
+            let delete_entries = self.entries.clone();
+            bar = bar.child(
+                div()
+                    .debug_selector(|| "reference-bulk-delete-button".to_owned())
+                    .child(
+                        Button::new("reference-bulk-delete")
+                            .label("Delete")
+                            .icon(IconName::Delete)
+                            .xsmall()
+                            .ghost()
+                            .danger()
+                            .tooltip("Delete the selected papers from the corpus and bibliography")
+                            .on_click(move |_, window, cx| {
+                                if let Some(handler) = &delete_handler {
+                                    handler(ReferenceAction::Delete, &delete_entries, window, cx);
+                                }
+                            }),
+                    ),
             );
             let clear_handler = handler.clone();
             let clear_entries = self.entries.clone();
@@ -1858,6 +1881,24 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[gpui_kit::test]
+    fn the_selection_bar_offers_delete(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let actions = Rc::new(RefCell::new(Vec::new()));
+        let host_actions = Rc::clone(&actions);
+        let (_, cx) = cx.add_window_view(move |_, _| BarHost {
+            entries: vec![entry("A", None), entry("B", None)],
+            actions: host_actions,
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let delete = cx
+            .debug_bounds("reference-bulk-delete-button")
+            .expect("delete bounds");
+        cx.simulate_click(delete.center(), Modifiers::default());
+        assert_eq!(actions.borrow().as_slice(), [ReferenceAction::Delete]);
     }
 
     #[tokio::test]

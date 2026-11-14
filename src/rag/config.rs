@@ -877,6 +877,24 @@ impl RagSettings {
         }
     }
 
+    /// Align the embedding model with one recorded in the workspace index.
+    ///
+    /// When `model` is a provider's default, that provider is selected too;
+    /// otherwise the current provider is kept.
+    pub fn align_embed_model_with(&mut self, model: &str) {
+        let model = model.trim();
+        if model.is_empty() {
+            return;
+        }
+        if let Some((provider, _)) = EmbedProvider::options()
+            .iter()
+            .find(|(provider, _)| provider.default_model() == model)
+        {
+            self.set_embed_provider(*provider);
+        }
+        self.embed_model = model.to_owned();
+    }
+
     fn default_models() -> BTreeMap<ChatProvider, String> {
         ChatProvider::options()
             .iter()
@@ -1760,6 +1778,25 @@ mod tests {
             settings.embed_model, "mxbai-embed-large",
             "a custom model survives a provider switch"
         );
+    }
+
+    #[test]
+    fn aligning_with_the_workspace_uses_the_recorded_model() {
+        let mut settings = fixture();
+        assert_eq!(settings.embed_provider, EmbedProvider::Ollama);
+
+        settings.align_embed_model_with(EmbedProvider::OpenAi.default_model());
+        assert_eq!(settings.embed_provider, EmbedProvider::OpenAi);
+        assert_eq!(settings.embed_model, EmbedProvider::OpenAi.default_model());
+
+        settings.embed_provider = EmbedProvider::Mistral;
+        settings.align_embed_model_with("custom-embed");
+        assert_eq!(
+            settings.embed_provider,
+            EmbedProvider::Mistral,
+            "a custom model does not change the provider"
+        );
+        assert_eq!(settings.embed_model, "custom-embed");
     }
 
     #[test]

@@ -13,7 +13,7 @@ pub(crate) mod bibtex;
 mod host;
 mod protocol;
 
-pub use bibtex::bibtex_entry_offset;
+pub use bibtex::{bibtex_entry_offset, remove_bibtex_entry};
 pub use host::{
     EditorSnapshot, EditorSurface, ReplacementOutcome, ReplacementTarget, Roundtrip, RoundtripHost,
     SelectionContext, SelectionSnapshot, char_index_for_line_column,

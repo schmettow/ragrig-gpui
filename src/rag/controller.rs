@@ -208,6 +208,51 @@ impl RagController {
         Ok(id)
     }
 
+    /// Discard the workspace index and rebuild every configured corpus with
+    /// the current embedding model.
+    ///
+    /// This is the recovery path for an `EmbeddingMismatch`: an incremental
+    /// sync cannot replace vectors created by another model.
+    pub fn reindex_corpus(
+        &mut self,
+        name: impl Into<String>,
+        folder: impl Into<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Result<RequestId, String> {
+        let id = self.request_id();
+        // The worker rebuilds the agent and reloads the same conversation;
+        // queued attachments and selections belong to it.
+        self.session_preserves_context = true;
+        self.send(
+            RagCommand::ReindexCorpus {
+                id,
+                name: name.into(),
+                folder: folder.into(),
+            },
+            cx,
+        )?;
+        Ok(id)
+    }
+
+    /// Drop documents from the vector store without re-embedding the corpus.
+    ///
+    /// Hosts call this after deleting the underlying files so retrieval stops
+    /// returning them before the next index run.
+    pub fn forget_documents(
+        &mut self,
+        corpus: impl Into<String>,
+        documents: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.send_quiet(
+            RagCommand::ForgetDocuments {
+                corpus: corpus.into(),
+                documents,
+            },
+            cx,
+        );
+    }
+
     /// Stop the running ingestion.
     pub fn stop_sync(&mut self, cx: &mut Context<Self>) {
         if let Some(id) = self.sync_request {

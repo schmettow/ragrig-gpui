@@ -7,7 +7,6 @@
 /// One `@type{key` header found in a bibliography.
 struct EntryHeader {
     /// Byte offset of the `@`.
-    #[cfg(feature = "grobid")]
     byte_offset: usize,
     /// The same offset counted in chars.
     char_offset: usize,
@@ -25,6 +24,78 @@ pub fn bibtex_entry_offset(text: &str, key: &str) -> Option<usize> {
         .into_iter()
         .find(|header| header.key.eq_ignore_ascii_case(key))
         .map(|header| header.char_offset)
+}
+
+/// Remove the entry whose key matches `key`.
+///
+/// The whole `@type{…}` or `@type(…)` block is removed, including the
+/// whitespace around it, so removing adjacent entries leaves no blank gaps.
+/// Keys compare case-insensitively. Returns `None` when no entry carries the
+/// key.
+#[must_use]
+pub fn remove_bibtex_entry(text: &str, key: &str) -> Option<String> {
+    let header = entry_headers(text)
+        .into_iter()
+        .find(|header| header.key.eq_ignore_ascii_case(key))?;
+    let end = entry_end(text, header.byte_offset)?;
+    let bytes = text.as_bytes();
+
+    let mut start = header.byte_offset;
+    while start > 0 && bytes[start - 1].is_ascii_whitespace() {
+        start -= 1;
+    }
+    let mut end = end;
+    while end < bytes.len() && bytes[end].is_ascii_whitespace() {
+        end += 1;
+    }
+
+    let left = &text[..start];
+    let right = &text[end..];
+    let separator = match (left.is_empty(), right.is_empty()) {
+        (false, false) => "\n\n",
+        (false, true) => "\n",
+        _ => "",
+    };
+    Some(format!("{left}{separator}{right}"))
+}
+
+/// The byte offset just past the closing delimiter of the entry at `at`.
+fn entry_end(text: &str, at: usize) -> Option<usize> {
+    let rest = &text[at + 1..];
+    let open = at + 1 + rest.find(['{', '('])?;
+    let open_char = text.as_bytes()[open] as char;
+    let in_parentheses = open_char == '(';
+    let mut braces = 0usize;
+    let mut in_quotes = false;
+    let mut escaped = false;
+
+    for (offset, character) in text[open..].char_indices() {
+        let position = open + offset;
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' => escaped = true,
+            '{' => braces += 1,
+            '}' => {
+                if braces > 0 {
+                    braces -= 1;
+                    if braces == 0 && !in_parentheses {
+                        return Some(position + 1);
+                    }
+                } else if !in_parentheses {
+                    return Some(position + 1);
+                }
+            }
+            '"' if braces == 0 => in_quotes = !in_quotes,
+            ')' if in_parentheses && braces == 0 && !in_quotes => {
+                return Some(position + 1);
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The 1-based line and the entry key at `byte_offset`.
@@ -86,7 +157,6 @@ fn entry_headers(text: &str) -> Vec<EntryHeader> {
             })
             .collect();
         headers.push(EntryHeader {
-            #[cfg(feature = "grobid")]
             byte_offset: at,
             char_offset: text[..at].chars().count(),
             key,
@@ -133,6 +203,41 @@ mod tests {
     fn offsets_are_char_indexed() {
         let text = "é\n@article{Kano2025,\n}\n";
         assert_eq!(bibtex_entry_offset(text, "Kano2025"), Some(2));
+    }
+
+    #[test]
+    fn entries_are_removed_without_leaving_blank_gaps() {
+        let text =
+            "@article{A,\n  title = {One},\n}\n\n@book{B,\n  title = {Two},\n}\n\n@misc{C,\n}\n";
+        let without_b = remove_bibtex_entry(text, "b").expect("entry B");
+        assert_eq!(
+            without_b,
+            "@article{A,\n  title = {One},\n}\n\n@misc{C,\n}\n"
+        );
+
+        let without_a = remove_bibtex_entry(text, "A").expect("entry A");
+        assert_eq!(without_a, "@book{B,\n  title = {Two},\n}\n\n@misc{C,\n}\n");
+
+        let without_c = remove_bibtex_entry(text, "C").expect("entry C");
+        assert_eq!(
+            without_c,
+            "@article{A,\n  title = {One},\n}\n\n@book{B,\n  title = {Two},\n}\n"
+        );
+    }
+
+    #[test]
+    fn removal_handles_parentheses_and_braced_values() {
+        let text = "@book (A,\n  title = {A (nested) value},\n)\n@misc{B,\n}\n";
+        assert_eq!(
+            remove_bibtex_entry(text, "A").expect("entry A"),
+            "@misc{B,\n}\n"
+        );
+    }
+
+    #[test]
+    fn removal_reports_a_missing_key() {
+        let text = "@article{A,\n}\n";
+        assert_eq!(remove_bibtex_entry(text, "Missing"), None);
     }
 
     #[cfg(feature = "grobid")]

@@ -876,6 +876,9 @@ impl Render for LibraryPanel {
                                     );
                                 });
                             }
+                            ReferenceAction::Delete => action_state.update(cx, |state, cx| {
+                                state.set_status("Delete is handled by the writing host", cx);
+                            }),
                             ReferenceAction::Clear => action_state.update(cx, |state, cx| {
                                 state.selected.clear();
                                 cx.notify();

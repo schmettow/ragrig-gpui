@@ -114,7 +114,7 @@ pub fn chat_settings_page(settings: Entity<ChatSettings>) -> SettingPage {
             SettingGroup::new()
                 .title("Model")
                 .item(
-                    SettingItem::new("Agent model", model)
+                    SettingItem::new("Chat model", model)
                         .description("Model used for this conversation."),
                 )
                 .item(

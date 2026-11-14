@@ -232,6 +232,9 @@ async fn handle(command: RagCommand, shared: Arc<Shared>, events: Sender<RagEven
         }
         RagCommand::RefreshSessions => send_sessions(&shared, &events).await,
         RagCommand::RefreshLibrary => send_library(&shared, &events).await,
+        RagCommand::ForgetDocuments { corpus, documents } => {
+            forget_documents(&shared, &events, corpus, documents).await;
+        }
         RagCommand::SyncCorpus { id, name, folder } => {
             if shared.generating.load(Ordering::Acquire) {
                 let _ = events
@@ -262,7 +265,39 @@ async fn handle(command: RagCommand, shared: Arc<Shared>, events: Sender<RagEven
                 .lock()
                 .expect("cancel map")
                 .insert(id, cancel.clone());
-            tokio::spawn(run_sync(shared, id, name, folder, cancel, events));
+            tokio::spawn(run_sync(shared, id, name, folder, cancel, events, false));
+        }
+        RagCommand::ReindexCorpus { id, name, folder } => {
+            if shared.generating.load(Ordering::Acquire) {
+                let _ = events
+                    .send(RagEvent::SyncFailed {
+                        id,
+                        message: "stop the running answer before indexing".to_owned(),
+                    })
+                    .await;
+                return;
+            }
+            if shared.syncing.swap(true, Ordering::AcqRel) {
+                let _ = events
+                    .send(RagEvent::SyncFailed {
+                        id,
+                        message: "an ingestion is already running".to_owned(),
+                    })
+                    .await;
+                return;
+            }
+            shared
+                .corpora
+                .lock()
+                .expect("corpus map")
+                .insert(name.clone(), folder.clone());
+            let cancel = CancellationToken::new();
+            shared
+                .cancels
+                .lock()
+                .expect("cancel map")
+                .insert(id, cancel.clone());
+            tokio::spawn(run_sync(shared, id, name, folder, cancel, events, true));
         }
         RagCommand::StopSync { id } => {
             if let Some(cancel) = shared.cancels.lock().expect("cancel map").remove(&id) {
@@ -409,12 +444,17 @@ async fn agent_info(shared: &Arc<Shared>) -> Option<AgentInfo> {
         )
     };
     let store = agent.store();
+    let (index_embed_model, index_embed_dims, embedding_mismatch) =
+        embedding_state(store, agent.embedder());
     Some(AgentInfo {
         workspace,
         chat_backend: agent.chat_agent().backend_name().to_owned(),
         chat_model: agent.chat_agent().model_name().to_owned(),
         embed_backend: agent.embedder().backend_name().to_owned(),
         embed_model: agent.embedder().model_name().to_owned(),
+        index_embed_model,
+        index_embed_dims,
+        embedding_mismatch,
         hybrid: agent.embedder().is_enabled(),
         memory: format!("{:?}", session.memory_strategy()).to_lowercase(),
         pdf_backend,
@@ -424,6 +464,57 @@ async fn agent_info(shared: &Arc<Shared>) -> Option<AgentInfo> {
         chunks: store.len(),
         documents: store.stored_documents().len(),
     })
+}
+
+/// Compare the workspace index with the active embedder.
+///
+/// Returns the model and dimensions recorded in the manifest (when one
+/// exists) and whether the store would reject the current embedder. The
+/// manifest is checked separately because it also covers stores without the
+/// metadata guard (pre-v0.9.8).
+fn embedding_state(
+    store: &dyn ragrig::store::VectorStore,
+    embedder: &dyn ragrig::embed::Embedder,
+) -> (Option<String>, Option<usize>, bool) {
+    let manifest = store.manifest();
+    let (guard_model, guard_dims, guard_mismatch) = if embedder.is_enabled() {
+        match store.validate_embedder(&embedder.metadata()) {
+            Ok(()) => (None, None, false),
+            Err(error) => match error.downcast_ref::<ragrig::RagrigError>() {
+                Some(ragrig::RagrigError::EmbeddingMismatch {
+                    stored_model,
+                    stored_dims,
+                    ..
+                }) => (Some(stored_model.clone()), Some(*stored_dims), true),
+                _ => (None, None, true),
+            },
+        }
+    } else {
+        (None, None, false)
+    };
+    // The guard records the vectors still in the store; prefer it when it
+    // disagrees with a stale manifest.
+    let indexed_model = guard_model.or_else(|| {
+        manifest
+            .as_ref()
+            .map(|manifest| manifest.embedding_model.clone())
+    });
+    let indexed_dims = guard_dims.or_else(|| {
+        manifest
+            .as_ref()
+            .map(|manifest| manifest.embedding_dimensions)
+    });
+    let manifest_mismatch = manifest.as_ref().is_some_and(|manifest| {
+        manifest.embedding_model != embedder.model_name()
+            || (manifest.embedding_dimensions != 0
+                && embedder.dimension() != 0
+                && manifest.embedding_dimensions != embedder.dimension())
+    });
+    (
+        indexed_model,
+        indexed_dims,
+        embedder.is_enabled() && (manifest_mismatch || guard_mismatch),
+    )
 }
 
 fn session_turns(session: &AgentSession) -> Vec<SessionTurn> {
@@ -755,6 +846,62 @@ fn sources(response: &RagResponse) -> Vec<SourceRef> {
     sources
 }
 
+async fn forget_documents(
+    shared: &Arc<Shared>,
+    events: &Sender<RagEvent>,
+    corpus: String,
+    documents: Vec<String>,
+) {
+    let guard = shared.session.lock().await;
+    let Some(session) = guard.as_ref() else {
+        drop(guard);
+        let _ = events
+            .send(RagEvent::Notice(
+                "no agent is ready yet; check the settings".to_owned(),
+            ))
+            .await;
+        return;
+    };
+    let store = session.agent().store();
+    let mut removed = 0usize;
+    let mut failure = None;
+    for document in &documents {
+        match store.delete_document(&corpus, document).await {
+            Ok(()) => removed += 1,
+            Err(error) => failure = Some(format!("{error:#}")),
+        }
+    }
+    let flush = store.flush();
+    drop(guard);
+
+    send_library(shared, events).await;
+    let message = match failure {
+        Some(error) => format!("removed {removed} document(s); {error}"),
+        None => format!("removed {removed} document(s) from the index"),
+    };
+    let message = match flush {
+        Ok(()) => message,
+        Err(error) => format!("{message}; cannot flush the store: {error:#}"),
+    };
+    let _ = events.send(RagEvent::Notice(message)).await;
+}
+
+/// Delete the vector-store artifacts so the next build starts from an empty
+/// index. Both built-in backends are covered; a missing path is fine.
+fn reset_store(data_dir: &Path) -> Result<(), String> {
+    let brute_force = data_dir.join(".ragrig_store");
+    if brute_force.exists() {
+        fs::remove_file(&brute_force)
+            .map_err(|error| format!("cannot remove '{}': {error}", brute_force.display()))?;
+    }
+    let lancedb = data_dir.join(".ragrig_lancedb");
+    if lancedb.exists() {
+        fs::remove_dir_all(&lancedb)
+            .map_err(|error| format!("cannot remove '{}': {error}", lancedb.display()))?;
+    }
+    Ok(())
+}
+
 async fn run_sync(
     shared: Arc<Shared>,
     id: RequestId,
@@ -762,6 +909,7 @@ async fn run_sync(
     folder: PathBuf,
     cancel: CancellationToken,
     events: Sender<RagEvent>,
+    full: bool,
 ) {
     if !shared.setup.lock().expect("setup").hybrid {
         let _ = events
@@ -813,11 +961,14 @@ async fn run_sync(
         }
     };
 
-    let corpus = FolderCorpus::named(name.clone(), folder);
-    let result = {
+    let result = if full {
+        reindex_workspace(&shared, &events, &name, &folder, &sink, &cancel)
+            .await
+            .map_err(|error| format!("{error:#}"))
+    } else {
+        let corpus = FolderCorpus::named(name.clone(), folder);
         let guard = shared.session.lock().await;
         let Some(session) = guard.as_ref() else {
-            drop(guard);
             let _ = events
                 .send(RagEvent::SyncFailed {
                     id,
@@ -834,6 +985,7 @@ async fn run_sync(
             .agent()
             .sync_corpus_with_progress(&corpus, Some(&sink), Some(&cancel))
             .await
+            .map_err(|error| format!("{error:#}"))
     };
 
     match result {
@@ -845,23 +997,130 @@ async fn run_sync(
                 failed: results.iter().filter(|result| !result.ok).count(),
             };
             let _ = events.send(RagEvent::SyncFinished { id, summary }).await;
-            send_library(&shared, &events).await;
+            if full {
+                announce_ready(&shared, &events).await;
+            } else {
+                send_library(&shared, &events).await;
+            }
         }
         Err(error) => {
-            if error.downcast_ref::<Cancelled>().is_some() {
+            if full {
+                announce_ready(&shared, &events).await;
+            }
+            if cancel.is_cancelled() {
                 let _ = events.send(RagEvent::SyncStopped { id }).await;
             } else {
                 let _ = events
-                    .send(RagEvent::SyncFailed {
-                        id,
-                        message: format!("{error:#}"),
-                    })
+                    .send(RagEvent::SyncFailed { id, message: error })
                     .await;
             }
         }
     }
 
     finish_sync(&shared, id);
+}
+
+/// Discard the index, rebuild the agent, and re-embed every corpus.
+///
+/// A full rebuild is required after an embedding-model change: the store
+/// rejects vectors from another model, and an incremental sync would keep
+/// the old blocks. The session identity survives the rebuild, so the next
+/// question continues the same conversation.
+async fn reindex_workspace(
+    shared: &Arc<Shared>,
+    events: &Sender<RagEvent>,
+    name: &str,
+    folder: &Path,
+    sink: &dyn ragrig::progress::Progress,
+    cancel: &CancellationToken,
+) -> Result<Vec<ragrig::FileIndexResult>, String> {
+    let previous = {
+        let guard = shared.session.lock().await;
+        guard.as_ref().map(|session| session.session_id().0.clone())
+    };
+    {
+        let mut guard = shared.session.lock().await;
+        *guard = None;
+    }
+
+    let (data_dir, configured) = {
+        let setup = shared.setup.lock().expect("setup");
+        let data_dir = setup
+            .data_dir
+            .clone()
+            .unwrap_or_else(|| setup.config.workspace.join(".ragrig"));
+        (data_dir, parse_corpora(&setup.config.corpus_dirs))
+    };
+    reset_store(&data_dir)?;
+
+    let mut corpora = shared.corpora.lock().expect("corpus map").clone();
+    corpora.retain(|name, _| !name.starts_with("references:"));
+    corpora.extend(configured);
+    corpora.insert(name.to_owned(), folder.to_path_buf());
+
+    rebuild_session(shared, events, None).await;
+    if shared.session.lock().await.is_none() {
+        return Err("the agent could not be rebuilt after resetting the index".to_owned());
+    }
+    *shared.corpora.lock().expect("corpus map") = corpora.clone();
+
+    if let Some(id) = previous {
+        let loaded = {
+            let mut guard = shared.session.lock().await;
+            match guard.as_mut() {
+                Some(session) => {
+                    if session
+                        .load_session(&ragrig::SessionId(id))
+                        .await
+                        .unwrap_or(false)
+                    {
+                        Some((session.session_id().0.clone(), session_turns(session)))
+                    } else {
+                        None
+                    }
+                }
+                None => None,
+            }
+        };
+        if let Some((id, turns)) = loaded {
+            let _ = events.send(RagEvent::SessionLoaded { id, turns }).await;
+        }
+    }
+
+    let guard = shared.session.lock().await;
+    let Some(session) = guard.as_ref() else {
+        return Err("the agent is not ready".to_owned());
+    };
+    let mut results = Vec::new();
+    for (corpus_name, corpus_folder) in &corpora {
+        if cancel.is_cancelled() {
+            return Err("indexing cancelled".to_owned());
+        }
+        if !corpus_folder.is_dir() {
+            trace(format!(
+                "skipping missing corpus '{}' at {}",
+                corpus_name,
+                corpus_folder.display()
+            ));
+            continue;
+        }
+        if scan_document_files(corpus_folder).is_empty() {
+            trace(format!(
+                "skipping empty corpus '{}' at {}",
+                corpus_name,
+                corpus_folder.display()
+            ));
+            continue;
+        }
+        let corpus = FolderCorpus::named(corpus_name.clone(), corpus_folder.clone());
+        let batch = session
+            .agent()
+            .reindex_corpus_with_progress(&corpus, Some(sink), Some(cancel))
+            .await
+            .map_err(|error| format!("{error:#}"))?;
+        results.extend(batch);
+    }
+    Ok(results)
 }
 
 fn finish_sync(shared: &Arc<Shared>, id: RequestId) {
@@ -1610,6 +1869,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn embedding_state_reports_the_index_model_and_a_mismatch() {
+        let workspace = temp_workspace("embed-state");
+        let store = store::open_store(&workspace).await.expect("open store");
+        let indexed = ragrig::embed::EmbeddingMetadata {
+            model_name: "old-embed".to_owned(),
+            dimensions: 8,
+            provider: "Test".to_owned(),
+        };
+        store.validate_embedder(&indexed).expect("record metadata");
+        store
+            .record_manifest(ragrig::IndexManifest {
+                created: String::new(),
+                chunk_size: 64,
+                chunk_overlap: 8,
+                chunker: "markdown".to_owned(),
+                embedding_model: "old-embed".to_owned(),
+                embedding_dimensions: 8,
+                document_count: 0,
+                total_chunks: 0,
+                file_hashes: Vec::new(),
+            })
+            .expect("record manifest");
+
+        let (model, dimensions, mismatch) = embedding_state(store.as_ref(), &FakeEmbedder);
+        assert_eq!(model.as_deref(), Some("old-embed"));
+        assert_eq!(dimensions, Some(8));
+        assert!(mismatch, "a different model must be reported");
+
+        // Stores without a manifest still report the guarded model.
+        let guarded = temp_workspace("embed-state-guarded");
+        let store = store::open_store(&guarded)
+            .await
+            .expect("open guarded store");
+        store.validate_embedder(&indexed).expect("record metadata");
+        let (model, dimensions, mismatch) = embedding_state(store.as_ref(), &FakeEmbedder);
+        assert_eq!(model.as_deref(), Some("old-embed"));
+        assert_eq!(dimensions, Some(8));
+        assert!(mismatch);
+
+        let _ = std::fs::remove_dir_all(workspace);
+        let _ = std::fs::remove_dir_all(guarded);
+    }
+
+    #[tokio::test]
     async fn sessions_are_listed_loaded_and_reset() {
         let workspace = temp_workspace("sessions");
         let (session, _) = test_session(&workspace, answer_chunks(), Duration::ZERO).await;
@@ -1721,6 +2024,62 @@ mod tests {
             Some(corpus.join("note.md").as_path())
         );
         assert!(snapshot.chunks >= 1);
+
+        commands.close();
+        handle.join().expect("worker thread");
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_document_removes_it_from_the_library() {
+        let workspace = temp_workspace("forget");
+        let corpus = workspace.join("papers");
+        std::fs::create_dir_all(&corpus).expect("corpus folder");
+        std::fs::write(
+            corpus.join("note.md"),
+            "# Note\n\nThe retrieval index keeps this paragraph.\n",
+        )
+        .expect("write note");
+
+        let (session, _) = test_session(&workspace, answer_chunks(), Duration::ZERO).await;
+        let (commands, events, handle) = spawn(&workspace, session);
+        let _ = wait_for(&events, |event| matches!(event, RagEvent::AgentReady(_))).await;
+
+        commands
+            .send(RagCommand::SyncCorpus {
+                id: RequestId::new(3),
+                name: "papers".to_owned(),
+                folder: corpus.clone(),
+            })
+            .await
+            .expect("sync corpus");
+        let _ = wait_for(&events, |event| {
+            matches!(event, RagEvent::SyncFinished { .. })
+        })
+        .await;
+
+        commands
+            .send(RagCommand::ForgetDocuments {
+                corpus: "papers".to_owned(),
+                documents: vec!["note.md".to_owned()],
+            })
+            .await
+            .expect("forget document");
+        let library = wait_for(
+            &events,
+            |event| matches!(event, RagEvent::Library(snapshot) if snapshot.documents.is_empty()),
+        )
+        .await;
+        let RagEvent::Library(snapshot) = library else {
+            unreachable!()
+        };
+        assert_eq!(snapshot.chunks, 0);
+
+        let notice = wait_for(&events, |event| matches!(event, RagEvent::Notice(_))).await;
+        let RagEvent::Notice(message) = notice else {
+            unreachable!()
+        };
+        assert!(message.contains("removed 1 document"));
 
         commands.close();
         handle.join().expect("worker thread");

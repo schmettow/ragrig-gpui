@@ -15,7 +15,7 @@ use gpui_kit::{
     AnyElement, App, ElementId, Entity, FontWeight, IntoElement, ParentElement as _, SharedString,
     Styled as _, Window,
     component::{
-        ActiveTheme as _, Sizable as _,
+        ActiveTheme as _, Disableable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
         setting::{
@@ -83,12 +83,17 @@ pub fn rag_settings_page(
     let now = RagChanges::default();
     let mut page = SettingPage::new("RAG")
         .description(
-            "Ragrig workspace, models, retrieval, and memory. Press Apply to rebuild the agent.",
+            "Scico workspace, models, retrieval, and memory. Press Apply to rebuild the agent.",
         )
         .default_open(true)
         .group(workspace_group(&settings))
         .group(chat_group(&settings, &changes, &now, None))
-        .group(retrieval_group(&settings, &changes, &now))
+        .group(retrieval_group(
+            &settings,
+            &changes,
+            &now,
+            Some(&controller),
+        ))
         .group(parsing_group(&settings, &changes, &now))
         .group(memory_group(&settings, &changes, &now))
         .group(rag_references_group(&settings, &changes));
@@ -106,6 +111,7 @@ pub fn rag_settings_page(
 /// field; `None` renders the path field alone.
 pub fn rag_model_page(
     settings: Entity<RagSettings>,
+    controller: Entity<RagController>,
     changes: Changes,
     prompt: Option<PromptActions>,
     cx: &App,
@@ -130,7 +136,12 @@ pub fn rag_model_page(
         page
     };
     page.group(chat_group(&settings, &changes, &now, prompt.as_ref()))
-        .group(retrieval_group(&settings, &changes, &now))
+        .group(retrieval_group(
+            &settings,
+            &changes,
+            &now,
+            Some(&controller),
+        ))
         .group(parsing_group(&settings, &changes, &now))
         .group(memory_group(&settings, &changes, &now))
 }
@@ -140,7 +151,7 @@ fn workspace_group(settings: &Entity<RagSettings>) -> SettingGroup {
     let settings_for_workspace = settings.clone();
     let workspace = path_setting(
         "rag-workspace",
-        "Choose the Ragrig workspace",
+        "Choose the Scico workspace",
         true,
         false,
         {
@@ -404,6 +415,7 @@ fn retrieval_group(
     settings: &Entity<RagSettings>,
     changes: &Changes,
     now: &RagChanges,
+    controller: Option<&Entity<RagController>>,
 ) -> SettingGroup {
     let hybrid = switch_row(
         settings,
@@ -503,18 +515,77 @@ fn retrieval_group(
     .description("Comma-separated name=path pairs.")
     .vertical();
 
-    mark_group(
-        SettingGroup::new()
-            .title(group_title("Retrieval", now.section(RagSection::Retrieval)))
-            .item(hybrid.into_item())
-            .item(embed_provider.into_item())
-            .item(embed_model.into_item())
-            .item(top_k.into_item())
-            .item(threshold.into_item())
-            .item(corpus_dirs.into_item()),
-        now,
-        RagSection::Retrieval,
+    let mut group = SettingGroup::new()
+        .title(group_title("Retrieval", now.section(RagSection::Retrieval)))
+        .item(hybrid.into_item())
+        .item(embed_provider.into_item())
+        .item(embed_model.into_item())
+        .item(top_k.into_item())
+        .item(threshold.into_item())
+        .item(corpus_dirs.into_item());
+    if let Some(controller) = controller {
+        group = group.item(align_with_workspace_item(
+            settings.clone(),
+            controller.clone(),
+        ));
+    }
+    mark_group(group, now, RagSection::Retrieval)
+}
+
+/// A button that copies the embedding model recorded in the workspace index
+/// into the settings form.
+fn align_with_workspace_item(
+    settings: Entity<RagSettings>,
+    controller: Entity<RagController>,
+) -> SettingItem {
+    SettingRow::new(
+        "Workspace embeddings",
+        crate::control(move |_, _, cx| {
+            let current = settings.read(cx).embed_model.trim().to_owned();
+            let workspace = controller
+                .read(cx)
+                .agent()
+                .and_then(|agent| agent.index_embed_model.clone())
+                .filter(|model| !model.trim().is_empty());
+            let Some(model) = workspace else {
+                return Button::new("rag-align-workspace")
+                    .label("Align with workspace")
+                    .icon(gpui_kit::assets::IconName::RefreshCw)
+                    .small()
+                    .outline()
+                    .disabled(true)
+                    .tooltip(
+                        "Index a corpus first; this workspace has no recorded embedding model.",
+                    )
+                    .into_any_element();
+            };
+            let aligned = current == model.trim();
+            let settings = settings.clone();
+            Button::new("rag-align-workspace")
+                .label("Align with workspace")
+                .icon(gpui_kit::assets::IconName::RefreshCw)
+                .small()
+                .outline()
+                .disabled(aligned)
+                .tooltip(if aligned {
+                    "The embedding model already matches the workspace.".to_owned()
+                } else {
+                    format!("Use the workspace embedding model '{model}'")
+                })
+                .on_click(move |_, _, cx| {
+                    settings.update(cx, |settings, cx| {
+                        settings.align_embed_model_with(&model);
+                        settings.status = Some(format!(
+                            "Embedding model aligned with the workspace ({model}) — press Apply"
+                        ));
+                        cx.notify();
+                    });
+                })
+                .into_any_element()
+        }),
     )
+    .description("Use the embedding model recorded in this workspace's index.")
+    .into_item()
 }
 
 fn parsing_group(

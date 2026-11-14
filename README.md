@@ -123,9 +123,10 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
   **Copy path**, and open stay visible on every row at reduced opacity and
   become fully opaque on hover; a row without a PDF explains why the path
   button is disabled. Select any number of rows and one floating bar appears
-  with **Copy @keys**, **Copy paths**, **Attach to next question**, and
-  **Clear**. The last-run report shows parsed, cached, merged, and duplicate
-  counts.
+  with **Copy @keys**, **Copy paths**, **Attach to next question**, a red
+  **Delete**, and **Clear**. The host owns deletion; the bar reports
+  `ReferenceAction::Delete`. The last-run report shows parsed, cached, merged,
+  and duplicate counts.
 - Click the paperclip on a document row to attach it to the next question.
 - **Chat** (center): ask a question. Write `@Kano2025` (or any key shown in the
   bibliography) and the paper is parsed and attached as one-shot context; a
@@ -219,6 +220,11 @@ ragrig-gpui
   `ask` sends one question; `ask_with_retrieval` also carries a passage that
   the worker prepends to the query before embedding and searching. The host's
   transcript still shows only the question.
+- `AgentInfo` reports the embedding model recorded in the workspace index
+  (`index_embed_model`, `index_embed_dims`) and whether it differs from the
+  active embedder (`embedding_mismatch`). `reindex_corpus` discards the store
+  and re-embeds every configured corpus with the current model;
+  `forget_documents` drops files from the vector store without re-embedding.
 - `RagChat::new(window, cx, controller)` wires the M1 primitives and re-emits
   `RagChatEvent`s for status, source clicks, and copy.
 - `RagSettings::to_setup()` validates and converts to `RagrigConfig` plus a
@@ -257,9 +263,12 @@ ragrig-gpui
   `<scico:v1:truncated shown="…" total="…"/>` marker, which the chat
   prompt already understands.
 - `rag_settings(id, settings, controller, cx)` builds the complete page;
-  Apply is explicit. `rag_model_page(settings, changes, prompt, cx)` exposes
-  the Chat/Retrieval/Parsing/Memory groups; pass `Some(PromptActions)` for
-  host-owned open/export buttons or `None` for the path field alone.
+  Apply is explicit. `rag_model_page(settings, controller, changes, prompt, cx)`
+  exposes the Chat/Retrieval/Parsing/Memory groups; pass `Some(PromptActions)`
+  for host-owned open/export buttons or `None` for the path field alone. The
+  Retrieval group's **Align with workspace** button copies the embedding model
+  recorded in the workspace index back into the form
+  (`RagSettings::align_embed_model_with`).
   `RagSettings::embed_provider` selects Ollama, llama.cpp, OpenAI, Mistral, or
   OpenRouter embeddings, and `set_embed_provider` fills in the provider's
   default model when the field still holds the previous default.
@@ -305,7 +314,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 195 library tests (four ignored: the GROBID end-to-end
+Current suite: 208 library tests (four ignored: the GROBID end-to-end
 test and the three Docker-dependent managed-container tests), 2 gallery tests,
 5 active spike tests plus one ignored typing benchmark, and 2 doctests. The
 GROBID end-to-end test runs with:

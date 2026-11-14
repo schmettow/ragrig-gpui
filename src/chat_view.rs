@@ -72,7 +72,7 @@ impl ChatIdentity {
 impl Default for ChatIdentity {
     fn default() -> Self {
         Self {
-            name: "Ragrig".into(),
+            name: "Scico".into(),
             icon: ChatIcon::Named(IconName::Bot),
         }
     }
