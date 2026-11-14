@@ -5,6 +5,43 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.9.3 — 2026-11-14
+
+### Changed
+
+- **gpui-kit 0.9.1.** The dependency moves from 0.7.3 to 0.9.1, the same
+  generation Scico 0.8.1 uses, so a host links one copy of the GPUI component
+  kit. The crate's public API is unchanged (`Cargo.toml`, `Cargo.lock`).
+
+### Quality
+
+Release validation on 2026-11-14 (Cargo 1.99.0, rustc 1.99.0).
+
+**Test coverage.** `cargo llvm-cov --all-features --summary-only` (doctests are
+not measured on stable Rust):
+
+| Metric | Covered | Total | Cover |
+| --- | ---: | ---: | ---: |
+| Regions | 14,085 | 24,521 | 57.44% |
+| Functions | 1,027 | 1,853 | 55.42% |
+| Lines | 8,564 | 15,516 | 55.19% |
+
+The source is unchanged apart from the dependency bump. The module figures
+called out for v0.9.2 are unchanged; the total is two covered lines below that
+run, which is run-to-run coverage noise in the asynchronous tests.
+
+**Tests.** `cargo test --all-features`: 210 passed, 5 ignored (201 lib, 2
+gallery, 5 spike with one measurement ignored, and 2 doctests). The end-to-end
+GROBID exercise was not run (no server was provided).
+
+**Checks.** `cargo fmt --check`, `cargo check --all-targets --all-features`,
+`cargo clippy --all-targets --all-features -- -D warnings`,
+`RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, `cargo package
+--list`, and `cargo publish --dry-run` are green.
+
+**Publication order.** `ragrig` 1.4.0 and `grobid-bibtex` 0.4.0 are already on
+crates.io. Publish `ragrig-gpui` 0.9.3 before Scico 0.8.1.
+
 ## v0.9.2 — 2026-11-13
 
 ### Added

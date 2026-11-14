@@ -394,9 +394,11 @@ the link error in CI.
   so a host only implements tab handling and caret placement. A malformed
   file is reported as `cannot parse '<path>' at line N (@Key): <reason>`;
   `bibtex_entry_location` maps the parser's byte span to that position.
-- The checked-in `Cargo.lock` is intentional: `gpui-kit 0.7.3`'s optional
-  `gpui-fast` branch pins `cocoa =0.26.0`, while a pre-existing lockfile may
-  hold `0.26.1`. A fresh resolve succeeds; a stale one fails.
+- The checked-in `Cargo.lock` is intentional: `gpui-kit 0.9.1`'s optional
+  `gpui-fast` branch pins `cocoa =0.26.0` and `unicode-properties =0.1.3`,
+  while a fresh resolve may pick newer patch versions. A stale lockfile fails
+  with a cocoa/unicode conflict; use the checked-in one. The 0.9.1 baseline is
+  `gpui-pre 0.3.12` and `gpui-fast 0.1.14`.
 
 ## License
 
