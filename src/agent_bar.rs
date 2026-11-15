@@ -51,6 +51,7 @@ type AgentHandler = Rc<dyn Fn(AgentBarEvent, &mut Window, &mut App)>;
 pub struct AgentBar {
     id: SharedString,
     components: Vec<AgentComponent>,
+    settings_tooltip: SharedString,
     on_event: Option<AgentHandler>,
 }
 
@@ -63,8 +64,15 @@ impl AgentBar {
         Self {
             id: id.into(),
             components: components.into_iter().collect(),
+            settings_tooltip: "Settings".into(),
             on_event: None,
         }
+    }
+
+    /// Label the settings button for the pane that owns this bar.
+    pub fn settings_tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.settings_tooltip = tooltip.into();
+        self
     }
 
     /// Receive configuration and settings requests.
@@ -81,6 +89,7 @@ impl RenderOnce for AgentBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let handler = self.on_event;
         let prefix = self.id;
+        let settings_tooltip = self.settings_tooltip;
 
         let components = self
             .components
@@ -105,7 +114,7 @@ impl RenderOnce for AgentBar {
                     .icon(IconName::Settings)
                     .ghost()
                     .small()
-                    .tooltip("Scico settings")
+                    .tooltip(settings_tooltip)
                     .on_click(move |_, window, cx| {
                         if let Some(handler) = &settings_handler {
                             handler(AgentBarEvent::OpenSettings, window, cx);

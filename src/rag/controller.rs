@@ -500,6 +500,10 @@ impl RagController {
     }
 
     /// Pipeline components for [`AgentBar`](crate::AgentBar).
+    ///
+    /// Every component carries a [`ComponentScope`](crate::ComponentScope);
+    /// hosts that show one bar per pane filter with
+    /// [`Self::agent_components_in`].
     pub fn agent_components(&self) -> Vec<AgentComponent> {
         let memory_toggle = ComponentToggle::new("memory", "Enabled", self.memory_enabled)
             .detail("Conversation transcript and query rewriting.");
@@ -539,18 +543,18 @@ impl RagController {
                         "hybrid retrieval"
                     } else {
                         "off · no embedding model"
-                    }),
+                    })
+                    .toggle(hybrid_toggle),
                 AgentComponent::new("store", ComponentKind::Store, "Vector store").status(status),
                 AgentComponent::new("parser", ComponentKind::Parser, "PDF parser").status(status),
                 AgentComponent::new("chunker", ComponentKind::Chunker, "Chunker").status(status),
-                AgentComponent::new("retriever", ComponentKind::Retriever, "Hybrid retrieval")
+                AgentComponent::new("retriever", ComponentKind::Retriever, "Retrieval")
                     .status(retrieval_status)
                     .detail(if self.hybrid {
                         "BM25 + embeddings"
                     } else {
                         "off · no embeddings"
-                    })
-                    .toggle(hybrid_toggle),
+                    }),
             ];
             #[cfg(feature = "grobid")]
             let components = {
@@ -584,6 +588,22 @@ impl RagController {
         } else {
             ComponentStatus::Ready
         };
+        let embed_detail = if self.hybrid {
+            match agent.index_embed_dims {
+                Some(dims) => format!("{} · {dims} dims", agent.embed_backend),
+                None => format!("{} · index pending", agent.embed_backend),
+            }
+        } else {
+            "off · no embedding model".to_owned()
+        };
+        let retrieval_detail = if self.hybrid {
+            format!(
+                "top {} · threshold {:.2}",
+                agent.top_k, agent.similarity_threshold
+            )
+        } else {
+            "off · no embeddings".to_owned()
+        };
 
         let components = vec![
             AgentComponent::new("chat", ComponentKind::Chat, agent.chat_model.clone())
@@ -608,11 +628,8 @@ impl RagController {
                 },
             )
             .status(retrieval_status)
-            .detail(if self.hybrid {
-                format!("{} · top {}", agent.embed_backend, agent.top_k)
-            } else {
-                "off · no embedding model".to_owned()
-            }),
+            .detail(embed_detail)
+            .toggle(hybrid_toggle),
             AgentComponent::new("store", ComponentKind::Store, "Vector store")
                 .status(pipeline)
                 .detail(format!(
@@ -629,14 +646,9 @@ impl RagController {
                     "{} tokens · {} overlap",
                     agent.chunk_size, agent.chunk_overlap
                 )),
-            AgentComponent::new("retriever", ComponentKind::Retriever, "Hybrid retrieval")
+            AgentComponent::new("retriever", ComponentKind::Retriever, "Retrieval")
                 .status(retrieval_status)
-                .detail(if self.hybrid {
-                    format!("BM25 + embeddings · top {}", agent.top_k)
-                } else {
-                    "off · no embeddings".to_owned()
-                })
-                .toggle(hybrid_toggle),
+                .detail(retrieval_detail),
         ];
         #[cfg(feature = "grobid")]
         let components = {
@@ -666,6 +678,14 @@ impl RagController {
             components
         };
         components
+    }
+
+    /// Pipeline components that belong to one pane.
+    pub fn agent_components_in(&self, scope: crate::ComponentScope) -> Vec<AgentComponent> {
+        self.agent_components()
+            .into_iter()
+            .filter(|component| component.in_scope(scope))
+            .collect()
     }
 
     fn request_id(&mut self) -> RequestId {

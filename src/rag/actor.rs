@@ -501,6 +501,7 @@ async fn agent_info(shared: &Arc<Shared>) -> Option<AgentInfo> {
         memory: format!("{:?}", session.memory_strategy()).to_lowercase(),
         pdf_backend,
         top_k: agent.top_k(),
+        similarity_threshold: agent.similarity_threshold(),
         chunk_size: agent.chunk_config().size,
         chunk_overlap: agent.chunk_config().overlap,
         chunks: store.len(),

@@ -339,7 +339,7 @@ pub struct RagReply {
 }
 
 /// The active Ragrig agent, as reported after a successful build.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AgentInfo {
     /// Workspace holding the store and sessions.
     pub workspace: PathBuf,
@@ -366,6 +366,8 @@ pub struct AgentInfo {
     pub pdf_backend: String,
     /// Retrieval budget.
     pub top_k: usize,
+    /// Minimum similarity for a chunk to enter the prompt.
+    pub similarity_threshold: f64,
     /// Chunk size in tokens.
     pub chunk_size: usize,
     /// Chunk overlap in tokens.

@@ -5,8 +5,8 @@
 //! - [`RagController`] — owns the Tokio worker and mirrors its state,
 //! - [`RagChat`] — transcript, attachments, and composer wired to the
 //!   controller,
-//! - [`RagSettings`] with [`rag_settings_page`] — full Ragrig configuration
-//!   and workspace profiles.
+//! - [`RagSettings`] with [`rag_ingestion_page`], [`rag_chat_page`], and
+//!   [`rag_settings_page`] — configuration, split by pane or shown as one page.
 //!
 //! Ragrig runs on a dedicated Tokio runtime thread. Do not drive its futures
 //! from GPUI's executor.
@@ -48,8 +48,10 @@ pub use protocol::{
     CitationCheckRequest, CitationCheckRow, CitationCheckSummary, CitationQuote, QuoteQuality,
 };
 pub use settings_page::{
-    Changes, ExportPrompt, OpenPrompt, PromptActions, no_changes, rag_model_page,
-    rag_reference_processing_group, rag_references_group, rag_settings, rag_settings_page,
+    Changes, ExportPrompt, OpenPrompt, PromptActions, no_changes, rag_apply_group, rag_chat_group,
+    rag_chat_page, rag_corpora_group, rag_embedding_group, rag_ingestion_page, rag_memory_group,
+    rag_parsing_group, rag_profiles_group, rag_reference_processing_group, rag_references_group,
+    rag_retrieval_group, rag_settings, rag_settings_page,
 };
 
 pub(crate) fn count_label(count: usize, singular: &str, plural: &str) -> String {

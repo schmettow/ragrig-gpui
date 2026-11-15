@@ -11,7 +11,7 @@ use gpui_kit::{
         ActiveTheme as _, Disableable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
-        setting::{SettingGroup, SettingItem, SettingPage},
+        setting::{SettingGroup, SettingItem},
         v_flex,
     },
     div, px, relative,
@@ -20,104 +20,14 @@ use gpui_kit::{
 #[cfg(feature = "grobid")]
 use crate::control;
 use crate::{
-    SettingRow, dirty_header, dropdown_control,
+    SettingRow, dropdown_control,
     rag::{Changes, RagField, RagSettings, ServiceSource},
     switch_control, text_control,
 };
 
 use super::{ContainerStatus, DockerStatus, ExternalServices, ServiceKind};
 
-/// Build the **External services** page.
-///
-/// Discovery, URL probing, and the managed containers all report through the
-/// [`ExternalServices`] entity. A successful probe or start writes the URL into
-/// `settings`, so the host can persist it and the next request uses it.
-pub fn external_services_page(
-    settings: Entity<RagSettings>,
-    service: Entity<ExternalServices>,
-    changes: Changes,
-    cx: &App,
-) -> SettingPage {
-    let dirty = {
-        let changes = changes.clone();
-        move |cx: &App| {
-            let current = changes(cx);
-            ServiceKind::ALL
-                .iter()
-                .any(|kind| group_dirty(&current, *kind))
-        }
-    };
-    let is_dirty = dirty(cx);
-    let title: SharedString = if is_dirty {
-        "External services ●".into()
-    } else {
-        "External services".into()
-    };
-
-    let description: SharedString = if cfg!(feature = "grobid") {
-        "GROBID turns PDF headers into bibliography records. Ollama supplies local chat and embedding models. llama.cpp serves a GGUF model through an OpenAI-compatible API. Use a server that is already running or let the app pull and run the official Docker image."
-    } else {
-        "Ollama supplies local chat and embedding models. llama.cpp serves a GGUF model through an OpenAI-compatible API. Use a server that is already running or let the app pull and run the official Docker image."
-    }
-    .into();
-    let mut page = SettingPage::new(title)
-        .description(description)
-        .default_open(true);
-    if is_dirty {
-        page = page.header_style(&dirty_header(cx));
-    }
-
-    if uses_docker_source(&settings, cx) {
-        page = page.group(docker_group(settings.clone(), service.clone()));
-    }
-    #[cfg(feature = "grobid")]
-    {
-        page = page.group(grobid_group(
-            settings.clone(),
-            service.clone(),
-            changes.clone(),
-            cx,
-        ));
-    }
-    page = page
-        .group(ollama_group(
-            settings.clone(),
-            service.clone(),
-            changes.clone(),
-            cx,
-        ))
-        .group(llamacpp_group(settings, service, changes, cx));
-    page
-}
-
-fn group_dirty(changes: &crate::rag::RagChanges, kind: ServiceKind) -> bool {
-    let fields: &[RagField] = match kind {
-        ServiceKind::Grobid => &[
-            RagField::GrobidSource,
-            RagField::GrobidUrl,
-            RagField::GrobidImage,
-            RagField::GrobidAutoStart,
-            RagField::GrobidContainer,
-        ],
-        ServiceKind::Ollama => &[
-            RagField::OllamaSource,
-            RagField::OllamaImage,
-            RagField::OllamaAutoStart,
-            RagField::OllamaContainer,
-        ],
-        ServiceKind::LlamaCpp => &[
-            RagField::LlamaCppSource,
-            RagField::LlamaCppImage,
-            RagField::LlamaCppModel,
-            RagField::LlamaCppArgs,
-            RagField::LlamaCppAutoStart,
-            RagField::LlamaCppContainer,
-        ],
-    };
-    fields.iter().any(|field| changes.contains(*field))
-}
-
-fn uses_docker_source(settings: &Entity<RagSettings>, cx: &App) -> bool {
+pub(crate) fn uses_docker_source(settings: &Entity<RagSettings>, cx: &App) -> bool {
     let settings = settings.read(cx);
     ServiceKind::ALL.iter().any(|kind| {
         matches!(
@@ -127,7 +37,8 @@ fn uses_docker_source(settings: &Entity<RagSettings>, cx: &App) -> bool {
     })
 }
 
-pub(crate) fn docker_group(
+/// The Docker status and refresh group shared by every managed service.
+pub fn docker_group(
     settings: Entity<RagSettings>,
     service: Entity<ExternalServices>,
 ) -> SettingGroup {
@@ -176,7 +87,8 @@ pub(crate) fn docker_group(
 }
 
 #[cfg(feature = "grobid")]
-pub(crate) fn grobid_group(
+/// The GROBID source, image, and container group.
+pub fn grobid_group(
     settings: Entity<RagSettings>,
     service: Entity<ExternalServices>,
     changes: Changes,
@@ -200,7 +112,8 @@ pub(crate) fn grobid_group(
         })
 }
 
-pub(crate) fn ollama_group(
+/// The Ollama source, image, container, and model-pull group.
+pub fn ollama_group(
     settings: Entity<RagSettings>,
     service: Entity<ExternalServices>,
     changes: Changes,
@@ -226,7 +139,8 @@ pub(crate) fn ollama_group(
         })
 }
 
-pub(crate) fn llamacpp_group(
+/// The llama.cpp source, image, model, and container group.
+pub fn llamacpp_group(
     settings: Entity<RagSettings>,
     service: Entity<ExternalServices>,
     changes: Changes,

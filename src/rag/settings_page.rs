@@ -1,8 +1,11 @@
 //! The Ragrig settings pages.
 //!
-//! Hosts can take the complete page, or split it by concern: [`rag_model_page`]
-//! contains the model, retrieval, parsing, and memory groups, while
-//! [`rag_references_group`] can be added to a host's own library page.
+//! Ingestion and chat are separate concerns. [`rag_ingestion_page`] owns
+//! embeddings, parsing, chunking, corpora, and references;
+//! [`rag_chat_page`] owns the chat model, memory, and retrieval parameters.
+//! Hosts that build their own pages can take the individual groups
+//! ([`rag_embedding_group`], [`rag_parsing_group`], [`rag_chat_group`], and so
+//! on) and keep host-specific rows beside them.
 //!
 //! Rows are built with [`SettingRow`] rather than [`SettingItem::new`] so a
 //! field that differs from the applied configuration can be marked in bold
@@ -32,8 +35,8 @@ use super::{
     RagSection, RagSettings,
 };
 use crate::{
-    SettingRow, dirty_color, dirty_header, dropdown_control, number_control, path_control,
-    path_setting, switch_control, text_control, token_control,
+    SettingRow, dirty_color, dropdown_control, number_control, path_control, path_setting,
+    switch_control, text_control, token_control,
 };
 
 /// Reports which settings differ from the configuration applied to the worker.
@@ -77,39 +80,63 @@ pub struct PromptActions {
 pub fn rag_settings_page(
     settings: Entity<RagSettings>,
     controller: Entity<RagController>,
+    changes: Changes,
     cx: &App,
 ) -> SettingPage {
-    let changes = no_changes();
-    let now = RagChanges::default();
-    let mut page = SettingPage::new("RAG")
+    let now = changes(cx);
+    let dirty = RagSection::ALL.iter().any(|section| now.section(*section));
+    SettingPage::new(group_title("RAG", dirty))
         .description(
-            "Scico workspace, models, retrieval, and memory. Press Apply to rebuild the agent.",
+            "Workspace ingestion, chat, retrieval, and memory. Press Apply to rebuild the agent.",
         )
         .default_open(true)
         .group(workspace_group(&settings))
-        .group(chat_group(&settings, &changes, &now, None))
-        .group(retrieval_group(
+        .group(rag_embedding_group(
             &settings,
             &changes,
-            &now,
             Some(&controller),
+            cx,
         ))
-        .group(parsing_group(&settings, &changes, &now))
-        .group(memory_group(&settings, &changes, &now))
-        .group(rag_references_group(&settings, &changes));
-    page = page
-        .group(profiles_group(&settings, cx))
-        .group(apply_group(&settings, &controller));
-    page
+        .group(rag_parsing_group(&settings, &changes, cx))
+        .group(rag_corpora_group(&settings, &changes, cx))
+        .group(rag_references_group(&settings, &changes, cx))
+        .group(rag_chat_group(&settings, &changes, None, cx))
+        .group(rag_memory_group(&settings, &changes, cx))
+        .group(rag_retrieval_group(&settings, &changes, cx))
+        .group(rag_profiles_group(&settings, cx))
+        .group(rag_apply_group(&settings, &controller))
 }
 
-/// The model, retrieval, parsing, and memory groups.
-///
-/// This is the RAG page for a host that keeps workspace, bibliography,
-/// profile management, and reference ingestion on its own pages. Pass
-/// [`PromptActions`] to add the open and export buttons beside the prompt file
-/// field; `None` renders the path field alone.
-pub fn rag_model_page(
+/// The ingestion page: parsing, chunking, embeddings, corpora, and references.
+pub fn rag_ingestion_page(
+    settings: Entity<RagSettings>,
+    controller: Entity<RagController>,
+    changes: Changes,
+    cx: &App,
+) -> SettingPage {
+    let now = changes(cx);
+    let dirty = now.section(RagSection::Embedding)
+        || now.section(RagSection::Parsing)
+        || now.section(RagSection::Corpora)
+        || now.section(RagSection::References)
+        || now.section(RagSection::Grobid);
+    SettingPage::new(group_title("Ingestion", dirty))
+        .description("How documents are parsed, chunked, embedded, and stored. Press Apply to rebuild the agent.")
+        .default_open(true)
+        .group(rag_embedding_group(
+            &settings,
+            &changes,
+            Some(&controller),
+            cx,
+        ))
+        .group(rag_parsing_group(&settings, &changes, cx))
+        .group(rag_corpora_group(&settings, &changes, cx))
+        .group(rag_references_group(&settings, &changes, cx))
+        .group(rag_apply_group(&settings, &controller))
+}
+
+/// The chat page: chat model, memory, and retrieval parameters.
+pub fn rag_chat_page(
     settings: Entity<RagSettings>,
     controller: Entity<RagController>,
     changes: Changes,
@@ -117,33 +144,21 @@ pub fn rag_model_page(
     cx: &App,
 ) -> SettingPage {
     let now = changes(cx);
-    let page_dirty = [
-        RagSection::Chat,
-        RagSection::Retrieval,
-        RagSection::Parsing,
-        RagSection::Memory,
-    ]
-    .iter()
-    .any(|section| now.section(*section));
-    let page = SettingPage::new(group_title("RAG", page_dirty))
-        .description(
-            "Models, retrieval, parsing, and memory. Press Apply on Overview to rebuild the agent.",
-        )
-        .default_open(true);
-    let page = if page_dirty {
-        page.header_style(&dirty_header(cx))
-    } else {
-        page
-    };
-    page.group(chat_group(&settings, &changes, &now, prompt.as_ref()))
-        .group(retrieval_group(
+    let dirty = now.section(RagSection::Chat)
+        || now.section(RagSection::Memory)
+        || now.section(RagSection::Retrieval);
+    SettingPage::new(group_title("Chat", dirty))
+        .description("Scico's chat model, memory, and retrieval parameters. Press Apply to rebuild the agent.")
+        .default_open(true)
+        .group(rag_chat_group(
             &settings,
             &changes,
-            &now,
-            Some(&controller),
+            prompt.as_ref(),
+            cx,
         ))
-        .group(parsing_group(&settings, &changes, &now))
-        .group(memory_group(&settings, &changes, &now))
+        .group(rag_memory_group(&settings, &changes, cx))
+        .group(rag_retrieval_group(&settings, &changes, cx))
+        .group(rag_apply_group(&settings, &controller))
 }
 
 /// The workspace and bibliography group for hosts that use Ragrig's page.
@@ -194,12 +209,17 @@ fn workspace_group(settings: &Entity<RagSettings>) -> SettingGroup {
         ))
 }
 
-fn chat_group(
+/// The chat group: provider, model, generation, and system prompt.
+///
+/// Pass [`PromptActions`] to add the open and export buttons beside the prompt
+/// file field; `None` renders the path field alone.
+pub fn rag_chat_group(
     settings: &Entity<RagSettings>,
     changes: &Changes,
-    now: &RagChanges,
     prompt: Option<&PromptActions>,
+    cx: &App,
 ) -> SettingGroup {
+    let now = changes(cx);
     let provider = dropdown_row(
         settings,
         changes,
@@ -207,7 +227,9 @@ fn chat_group(
         move |_| provider_options(),
         |settings| settings.provider.label().to_owned(),
         |settings, value| {
-            settings.provider = ChatProvider::from_label(&value).unwrap_or(settings.provider);
+            settings.set_provider(
+                ChatProvider::from_label(&value).unwrap_or(settings.provider),
+            );
         },
     )
     .description(format!(
@@ -327,7 +349,7 @@ fn chat_group(
         }));
     }
 
-    mark_group(group, now, RagSection::Chat)
+    mark_group(group, &now, RagSection::Chat)
 }
 
 fn prompt_buttons(
@@ -411,12 +433,14 @@ fn prompt_buttons(
         .into_any_element()
 }
 
-fn retrieval_group(
+/// The embedding group: provider, model, and the hybrid switch.
+pub fn rag_embedding_group(
     settings: &Entity<RagSettings>,
     changes: &Changes,
-    now: &RagChanges,
     controller: Option<&Entity<RagController>>,
+    cx: &App,
 ) -> SettingGroup {
+    let now = changes(cx);
     let hybrid = switch_row(
         settings,
         changes,
@@ -451,7 +475,7 @@ fn retrieval_group(
         },
     )
     .description(format!(
-        "Keys: {}. llama.cpp reads LLAMACPP_API_BASE_URL and optionally LLAMACPP_API_KEY; a missing key is reported when the agent starts.",
+        "Defaults to the chat provider. Keys: {}. llama.cpp reads LLAMACPP_API_BASE_URL and optionally LLAMACPP_API_KEY; a missing key is reported when the agent starts.",
         EmbedProvider::options()
             .iter()
             .filter(|(provider, _)| provider.key_required())
@@ -469,6 +493,92 @@ fn retrieval_group(
     .description(
         "Switching providers fills in that provider's default unless a custom model is set.",
     );
+
+    let mut group = SettingGroup::new()
+        .title(group_title(
+            "Embeddings",
+            now.section(RagSection::Embedding),
+        ))
+        .item(hybrid.into_item())
+        .item(embed_provider.into_item())
+        .item(embed_model.into_item());
+    if let Some(controller) = controller {
+        group = group.item(align_with_workspace_item(
+            settings.clone(),
+            controller.clone(),
+        ));
+    }
+    mark_group(group, &now, RagSection::Embedding)
+}
+
+/// The named folder corpora that join the workspace index.
+pub fn rag_corpora_group(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    cx: &App,
+) -> SettingGroup {
+    let now = changes(cx);
+    let corpus_dirs = text_row(
+        settings,
+        changes,
+        spec("rag-corpus-dirs", RagField::CorpusDirs, "Folder corpora"),
+        |settings| settings.corpus_dirs.join(", "),
+        |settings, value| {
+            settings.corpus_dirs = value
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(str::to_owned)
+                .collect();
+        },
+    )
+    .description("Comma-separated name=path pairs.")
+    .vertical();
+
+    mark_group(
+        SettingGroup::new()
+            .title(group_title(
+                "Folder corpora",
+                now.section(RagSection::Corpora),
+            ))
+            .item(corpus_dirs.into_item()),
+        &now,
+        RagSection::Corpora,
+    )
+}
+
+/// The retrieval group: chunk budget and similarity threshold.
+///
+/// The embedding model is shown read-only; it is set on the Workspace side.
+pub fn rag_retrieval_group(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    cx: &App,
+) -> SettingGroup {
+    let now = changes(cx);
+    let embedding_reader = settings.clone();
+    let embedding_model = SettingRow::new(
+        "Embedding model",
+        crate::control(move |_, _, cx| {
+            let settings = embedding_reader.read(cx);
+            div()
+                .text_sm()
+                .child(format!(
+                    "{} · {}",
+                    settings.embed_provider.label(),
+                    settings.embed_model
+                ))
+                .into_any_element()
+        }),
+    )
+    .description("Set in Workspace settings.")
+    .dirty({
+        let changes = changes.clone();
+        move |cx| {
+            let changes = changes(cx);
+            changes.contains(RagField::EmbedProvider) || changes.contains(RagField::EmbedModel)
+        }
+    });
     let top_k = number_row(
         settings,
         changes,
@@ -498,38 +608,16 @@ fn retrieval_group(
         |settings, value| settings.similarity_threshold = value.clamp(0.0, 1.0),
     )
     .description("Chunks below this score are dropped.");
-    let corpus_dirs = text_row(
-        settings,
-        changes,
-        spec("rag-corpus-dirs", RagField::CorpusDirs, "Folder corpora"),
-        |settings| settings.corpus_dirs.join(", "),
-        |settings, value| {
-            settings.corpus_dirs = value
-                .split(',')
-                .map(str::trim)
-                .filter(|entry| !entry.is_empty())
-                .map(str::to_owned)
-                .collect();
-        },
-    )
-    .description("Comma-separated name=path pairs.")
-    .vertical();
 
-    let mut group = SettingGroup::new()
-        .title(group_title("Retrieval", now.section(RagSection::Retrieval)))
-        .item(hybrid.into_item())
-        .item(embed_provider.into_item())
-        .item(embed_model.into_item())
-        .item(top_k.into_item())
-        .item(threshold.into_item())
-        .item(corpus_dirs.into_item());
-    if let Some(controller) = controller {
-        group = group.item(align_with_workspace_item(
-            settings.clone(),
-            controller.clone(),
-        ));
-    }
-    mark_group(group, now, RagSection::Retrieval)
+    mark_group(
+        SettingGroup::new()
+            .title(group_title("Retrieval", now.section(RagSection::Retrieval)))
+            .item(embedding_model.into_item())
+            .item(top_k.into_item())
+            .item(threshold.into_item()),
+        &now,
+        RagSection::Retrieval,
+    )
 }
 
 /// A button that copies the embedding model recorded in the workspace index
@@ -588,11 +676,13 @@ fn align_with_workspace_item(
     .into_item()
 }
 
-fn parsing_group(
+/// The parsing group: PDF backend and chunking.
+pub fn rag_parsing_group(
     settings: &Entity<RagSettings>,
     changes: &Changes,
-    now: &RagChanges,
+    cx: &App,
 ) -> SettingGroup {
+    let now = changes(cx);
     let pdf_options: Vec<(SharedString, SharedString)> = PdfBackend::options()
         .iter()
         .map(|(backend, label)| {
@@ -667,16 +757,18 @@ fn parsing_group(
                     .text_color(cx.theme().muted_foreground)
                     .child("Changing chunking only affects new ingestion, not stored chunks.")
             }),
-        now,
+        &now,
         RagSection::Parsing,
     )
 }
 
-fn memory_group(
+/// The memory group: strategy and rewriting model.
+pub fn rag_memory_group(
     settings: &Entity<RagSettings>,
     changes: &Changes,
-    now: &RagChanges,
+    cx: &App,
 ) -> SettingGroup {
+    let now = changes(cx);
     let memory_options: Vec<(SharedString, SharedString)> = MemoryChoice::options()
         .iter()
         .map(|(choice, label)| {
@@ -713,17 +805,18 @@ fn memory_group(
             .title(group_title("Memory", now.section(RagSection::Memory)))
             .item(memory.into_item())
             .item(memory_model.into_item()),
-        now,
+        &now,
         RagSection::Memory,
     )
 }
 
-/// The reference-ingestion group for a host's library page.
-///
-/// The GROBID server row belongs to the host's **External services** page;
-/// hosts that show that page can use [`rag_reference_processing_group`] to
-/// avoid a duplicate URL field.
-pub fn rag_references_group(settings: &Entity<RagSettings>, changes: &Changes) -> SettingGroup {
+/// The reference-ingestion group: GROBID server and processing switches.
+pub fn rag_references_group(
+    settings: &Entity<RagSettings>,
+    changes: &Changes,
+    cx: &App,
+) -> SettingGroup {
+    let now = changes(cx);
     let grobid_url = text_row(
         settings,
         changes,
@@ -734,43 +827,59 @@ pub fn rag_references_group(settings: &Entity<RagSettings>, changes: &Changes) -
     .description("Used when parsing a folder's PDFs into the bibliography.");
     let (rename_pdfs, openalex, resolve_citations) = reference_processing_rows(settings, changes);
 
-    SettingGroup::new()
-        .title("References")
-        .item(grobid_url.into_item())
-        .item(rename_pdfs.into_item())
-        .item(openalex.into_item())
-        .item(resolve_citations.into_item())
-        .footer(|_, cx| {
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(
-                    "Records merge into the Library bibliography (default .ragrig/references.bib).",
-                )
-        })
+    mark_group_any(
+        SettingGroup::new()
+            .title(group_title(
+                "References",
+                now.section(RagSection::References) || now.section(RagSection::Grobid),
+            ))
+            .item(grobid_url.into_item())
+            .item(rename_pdfs.into_item())
+            .item(openalex.into_item())
+            .item(resolve_citations.into_item())
+            .footer(|_, cx| {
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        "Records merge into the Library bibliography (default .ragrig/references.bib).",
+                    )
+            }),
+        &now,
+        &[RagSection::References, RagSection::Grobid],
+    )
 }
 
-/// The reference-processing rows for a host that manages the GROBID server on
-/// its own **External services** page.
+/// The reference-processing switches for hosts that show the GROBID service
+/// group beside them.
+///
+/// This variant omits the server URL so it can sit next to `grobid_group`
+/// (re-exported from the service groups) without a duplicate field.
 pub fn rag_reference_processing_group(
     settings: &Entity<RagSettings>,
     changes: &Changes,
+    cx: &App,
 ) -> SettingGroup {
+    let now = changes(cx);
     let (rename_pdfs, openalex, resolve_citations) = reference_processing_rows(settings, changes);
 
-    SettingGroup::new()
-        .title("References")
-        .item(rename_pdfs.into_item())
-        .item(openalex.into_item())
-        .item(resolve_citations.into_item())
-        .footer(|_, cx| {
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(
-                    "Records merge into the Library bibliography (default .ragrig/references.bib).",
-                )
-        })
+    mark_group(
+        SettingGroup::new()
+            .title(group_title("Reference processing", now.section(RagSection::References)))
+            .item(rename_pdfs.into_item())
+            .item(openalex.into_item())
+            .item(resolve_citations.into_item())
+            .footer(|_, cx| {
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        "Records merge into the Library bibliography (default .ragrig/references.bib).",
+                    )
+            }),
+        &now,
+        RagSection::References,
+    )
 }
 
 fn reference_processing_rows(
@@ -809,7 +918,8 @@ fn reference_processing_rows(
     (rename_pdfs, openalex, resolve_citations)
 }
 
-fn profiles_group(settings: &Entity<RagSettings>, cx: &App) -> SettingGroup {
+/// The profile group: load, create, save, and reset profiles.
+pub fn rag_profiles_group(settings: &Entity<RagSettings>, cx: &App) -> SettingGroup {
     let profile_name = input_field(
         settings,
         |settings| settings.profile_name.clone(),
@@ -839,7 +949,11 @@ fn profiles_group(settings: &Entity<RagSettings>, cx: &App) -> SettingGroup {
         })
 }
 
-fn apply_group(settings: &Entity<RagSettings>, controller: &Entity<RagController>) -> SettingGroup {
+/// The Apply group shared by split settings pages.
+pub fn rag_apply_group(
+    settings: &Entity<RagSettings>,
+    controller: &Entity<RagController>,
+) -> SettingGroup {
     let settings = settings.clone();
     let controller = controller.clone();
     let apply =
@@ -852,9 +966,10 @@ pub fn rag_settings(
     id: impl Into<ElementId>,
     settings: Entity<RagSettings>,
     controller: Entity<RagController>,
+    changes: Changes,
     cx: &App,
 ) -> Settings {
-    Settings::new(id).page(rag_settings_page(settings, controller, cx))
+    Settings::new(id).page(rag_settings_page(settings, controller, changes, cx))
 }
 
 fn profile_buttons(settings: Entity<RagSettings>, cx: &mut App) -> AnyElement {
@@ -993,7 +1108,12 @@ pub(crate) fn group_title(label: &str, dirty: bool) -> SharedString {
 
 /// Append the "unsaved changes" footer to a group that differs from the agent.
 fn mark_group(group: SettingGroup, now: &RagChanges, section: RagSection) -> SettingGroup {
-    if !now.section(section) {
+    mark_group_any(group, now, &[section])
+}
+
+/// Mark a group when any of its sections has unsaved changes.
+fn mark_group_any(group: SettingGroup, now: &RagChanges, sections: &[RagSection]) -> SettingGroup {
+    if !sections.iter().any(|section| now.section(*section)) {
         return group;
     }
     group.footer(|_, cx| {
@@ -1001,7 +1121,7 @@ fn mark_group(group: SettingGroup, now: &RagChanges, section: RagSection) -> Set
             .text_xs()
             .font_weight(FontWeight::BOLD)
             .text_color(dirty_color(cx))
-            .child("● Unsaved changes — press Apply on Overview")
+            .child("● Unsaved changes — press Apply")
     })
 }
 

@@ -1,7 +1,9 @@
-//! External service management for the settings page.
+//! External service management for the split settings pages.
 //!
 //! Available with the `managed` feature; the GROBID-specific names stay
-//! available when the `grobid` feature is enabled.
+//! available when the `grobid` feature is enabled. Each service is a
+//! [`SettingGroup`](gpui_kit::component::setting::SettingGroup) that a host can
+//! place on the pane that uses it; there is no separate services page.
 
 mod managed;
 mod settings_page;
@@ -16,10 +18,9 @@ pub use managed::{
     GrobidContainerStatus, GrobidDockerStatus, GrobidProbe, GrobidProbeStatus, GrobidService,
     GrobidServiceEvent,
 };
-pub use settings_page::external_services_page;
 #[cfg(feature = "grobid")]
-pub(crate) use settings_page::grobid_group;
-pub(crate) use settings_page::{docker_group, llamacpp_group, ollama_group};
+pub use settings_page::grobid_group;
+pub use settings_page::{docker_group, llamacpp_group, ollama_group};
 pub use spec::{
     GROBID_DISCOVERY_PORTS, LLAMACPP_DISCOVERY_PORTS, MANAGED_GROBID_CONTAINER,
     MANAGED_GROBID_PORT, MANAGED_GROBID_URL, MANAGED_LLAMACPP_CONTAINER, MANAGED_LLAMACPP_PORT,

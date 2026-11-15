@@ -4,6 +4,30 @@ use gpui_kit::assets::IconName;
 
 use crate::icon::ChatIcon;
 
+/// The pane that owns a pipeline component.
+///
+/// Ingestion lives in the workspace pane; chat and retrieval live in the
+/// conversation pane. The split keeps status, settings, and apply actions on
+/// the side whose work they describe.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ComponentScope {
+    /// Reading, chunking, embedding, and storing documents.
+    #[default]
+    Ingestion,
+    /// Generating answers, memory, and retrieval parameters.
+    Chat,
+}
+
+impl ComponentScope {
+    /// Short human-readable name.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ingestion => "Ingestion",
+            Self::Chat => "Chat",
+        }
+    }
+}
+
 /// The role a component plays in the RAG pipeline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ComponentKind {
@@ -43,6 +67,20 @@ impl ComponentKind {
             Self::Vision => "Vision",
             Self::References => "References",
             Self::Other => "Component",
+        }
+    }
+
+    /// The pane that owns this kind.
+    pub fn scope(self) -> ComponentScope {
+        match self {
+            Self::Chat | Self::Memory | Self::Retriever => ComponentScope::Chat,
+            Self::Embedder
+            | Self::Store
+            | Self::Parser
+            | Self::Chunker
+            | Self::Vision
+            | Self::References
+            | Self::Other => ComponentScope::Ingestion,
         }
     }
 
@@ -145,6 +183,8 @@ pub struct AgentComponent {
     pub detail: Option<String>,
     /// Optional mark overriding the kind's catalog icon.
     pub icon: Option<ChatIcon>,
+    /// Pane that owns the component.
+    pub scope: ComponentScope,
     /// Switches offered in the component popover.
     pub toggles: Vec<ComponentToggle>,
 }
@@ -159,6 +199,7 @@ impl AgentComponent {
             status: ComponentStatus::default(),
             detail: None,
             icon: None,
+            scope: kind.scope(),
             toggles: Vec::new(),
         }
     }
@@ -170,6 +211,17 @@ impl AgentComponent {
     pub fn icon(mut self, icon: impl Into<ChatIcon>) -> Self {
         self.icon = Some(icon.into());
         self
+    }
+
+    /// Place the component in the other pane.
+    pub fn scope(mut self, scope: ComponentScope) -> Self {
+        self.scope = scope;
+        self
+    }
+
+    /// Whether the component belongs to `scope`.
+    pub fn in_scope(&self, scope: ComponentScope) -> bool {
+        self.scope == scope
     }
 
     /// Set the status.
@@ -202,6 +254,18 @@ mod tests {
         assert_eq!(ComponentKind::Chunker.icon(), IconName::Pilcrow);
         assert_eq!(ComponentKind::References.label(), "References");
         assert_eq!(ComponentKind::References.icon(), IconName::BookOpen);
+    }
+
+    #[test]
+    fn kinds_split_between_ingestion_and_chat() {
+        assert_eq!(ComponentKind::Chat.scope(), ComponentScope::Chat);
+        assert_eq!(ComponentKind::Memory.scope(), ComponentScope::Chat);
+        assert_eq!(ComponentKind::Retriever.scope(), ComponentScope::Chat);
+        assert_eq!(ComponentKind::Embedder.scope(), ComponentScope::Ingestion);
+        assert_eq!(ComponentKind::Store.scope(), ComponentScope::Ingestion);
+        assert_eq!(ComponentKind::Parser.scope(), ComponentScope::Ingestion);
+        assert_eq!(ComponentKind::Chunker.scope(), ComponentScope::Ingestion);
+        assert_eq!(ComponentKind::References.scope(), ComponentScope::Ingestion);
     }
 
     #[test]
@@ -243,6 +307,15 @@ mod tests {
         assert_eq!(component.status, ComponentStatus::Inactive);
         assert!(!component.status.is_busy());
         assert!(component.toggles.is_empty());
+        assert!(component.in_scope(ComponentScope::Chat));
+        assert!(!component.in_scope(ComponentScope::Ingestion));
+    }
+
+    #[test]
+    fn a_scope_can_be_overridden() {
+        let component = AgentComponent::new("references", ComponentKind::References, "GROBID")
+            .scope(ComponentScope::Chat);
+        assert!(component.in_scope(ComponentScope::Chat));
     }
 
     #[test]

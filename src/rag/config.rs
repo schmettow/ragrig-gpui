@@ -97,6 +97,20 @@ impl ChatProvider {
         }
     }
 
+    /// The embedding backend that matches this chat provider, when one exists.
+    ///
+    /// DeepSeek and Claude expose no embeddings API, so they return `None`.
+    pub fn embed_provider(self) -> Option<EmbedProvider> {
+        match self {
+            Self::Ollama => Some(EmbedProvider::Ollama),
+            Self::LlamaCpp => Some(EmbedProvider::LlamaCpp),
+            Self::OpenAi => Some(EmbedProvider::OpenAi),
+            Self::Mistral => Some(EmbedProvider::Mistral),
+            Self::OpenRouter => Some(EmbedProvider::OpenRouter),
+            Self::DeepSeek | Self::Claude => None,
+        }
+    }
+
     /// Options for a dropdown.
     pub fn options() -> &'static [(Self, &'static str)] {
         &[
@@ -683,6 +697,11 @@ impl RagField {
     pub fn section(self) -> RagSection {
         match self {
             Self::Workspace | Self::Bibliography => RagSection::Workspace,
+            Self::EmbedProvider | Self::EmbedModel | Self::Hybrid => RagSection::Embedding,
+            Self::CorpusDirs => RagSection::Corpora,
+            Self::PdfBackend | Self::SloppyPdf | Self::ChunkSize | Self::ChunkOverlap => {
+                RagSection::Parsing
+            }
             Self::Provider
             | Self::Model
             | Self::LlamaCppUrl
@@ -691,22 +710,15 @@ impl RagField {
             | Self::ContextTokens
             | Self::Stream
             | Self::SystemPrompt => RagSection::Chat,
-            Self::EmbedProvider
-            | Self::EmbedModel
-            | Self::Hybrid
-            | Self::TopK
-            | Self::SimilarityThreshold
-            | Self::CorpusDirs => RagSection::Retrieval,
-            Self::PdfBackend | Self::SloppyPdf | Self::ChunkSize | Self::ChunkOverlap => {
-                RagSection::Parsing
-            }
             Self::Memory | Self::MemoryModel => RagSection::Memory,
+            Self::TopK | Self::SimilarityThreshold => RagSection::Retrieval,
+            Self::RenamePdfs | Self::OpenAlex | Self::ResolveCitations => RagSection::References,
             Self::GrobidSource
             | Self::GrobidUrl
             | Self::GrobidImage
             | Self::GrobidAutoStart
-            | Self::GrobidContainer
-            | Self::OllamaSource
+            | Self::GrobidContainer => RagSection::Grobid,
+            Self::OllamaSource
             | Self::OllamaImage
             | Self::OllamaAutoStart
             | Self::OllamaContainer
@@ -716,7 +728,6 @@ impl RagField {
             | Self::LlamaCppModel
             | Self::LlamaCppArgs
             | Self::LlamaCppAutoStart => RagSection::Services,
-            Self::RenamePdfs | Self::OpenAlex | Self::ResolveCitations => RagSection::References,
         }
     }
 }
@@ -726,29 +737,38 @@ impl RagField {
 pub enum RagSection {
     /// Workspace folder and bibliography.
     Workspace,
-    /// Provider, models, generation, and prompt.
-    Chat,
-    /// Embedding and retrieval.
-    Retrieval,
+    /// Embedding provider, model, and the hybrid switch.
+    Embedding,
     /// Parser and chunking.
     Parsing,
+    /// Named folder corpora.
+    Corpora,
+    /// Provider, models, generation, and prompt.
+    Chat,
     /// Memory strategy and model.
     Memory,
+    /// Retrieved chunks and similarity threshold.
+    Retrieval,
     /// Renaming, OpenAlex, and citations.
     References,
-    /// External services such as GROBID, Ollama, and llama.cpp.
+    /// GROBID server and container.
+    Grobid,
+    /// Ollama and llama.cpp servers.
     Services,
 }
 
 impl RagSection {
     /// Every section, in page order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 10] = [
         Self::Workspace,
-        Self::Chat,
-        Self::Retrieval,
+        Self::Embedding,
         Self::Parsing,
+        Self::Corpora,
+        Self::Chat,
         Self::Memory,
+        Self::Retrieval,
         Self::References,
+        Self::Grobid,
         Self::Services,
     ];
 
@@ -756,12 +776,15 @@ impl RagSection {
     pub fn label(self) -> &'static str {
         match self {
             Self::Workspace => "Workspace",
-            Self::Chat => "Chat",
-            Self::Retrieval => "Retrieval",
+            Self::Embedding => "Embedding",
             Self::Parsing => "Parsing and chunking",
+            Self::Corpora => "Folder corpora",
+            Self::Chat => "Chat",
             Self::Memory => "Memory",
+            Self::Retrieval => "Retrieval",
             Self::References => "References",
-            Self::Services => "External services",
+            Self::Grobid => "GROBID",
+            Self::Services => "Local services",
         }
     }
 }
@@ -853,6 +876,21 @@ impl RagSettings {
     /// Set the model of the active provider.
     pub fn set_model(&mut self, model: impl Into<String>) {
         self.set_model_for(self.provider, model);
+    }
+
+    /// Switch the chat backend and let the embedder follow by default.
+    ///
+    /// The embedder follows only while it still points at the previous chat
+    /// provider; an embedding backend the user chose explicitly is kept.
+    pub fn set_provider(&mut self, provider: ChatProvider) {
+        if provider == self.provider {
+            return;
+        }
+        let follows = self.provider.embed_provider() == Some(self.embed_provider);
+        self.provider = provider;
+        if follows && let Some(embed) = provider.embed_provider() {
+            self.set_embed_provider(embed);
+        }
     }
 
     /// Set the model of `provider`.
@@ -1758,6 +1796,32 @@ mod tests {
         let mut settings = fixture();
         settings.resolve_citations = false;
         assert!(!settings.to_setup().expect("valid setup").resolve_citations);
+    }
+
+    #[test]
+    fn the_embedder_follows_the_chat_provider_by_default() {
+        let mut settings = fixture();
+        assert_eq!(settings.provider, ChatProvider::Ollama);
+        assert_eq!(settings.embed_provider, EmbedProvider::Ollama);
+
+        settings.set_provider(ChatProvider::OpenRouter);
+        assert_eq!(settings.embed_provider, EmbedProvider::OpenRouter);
+        assert_eq!(
+            settings.embed_model,
+            EmbedProvider::OpenRouter.default_model()
+        );
+
+        // DeepSeek has no embeddings API; the last usable backend is kept.
+        settings.set_provider(ChatProvider::DeepSeek);
+        assert_eq!(settings.embed_provider, EmbedProvider::OpenRouter);
+    }
+
+    #[test]
+    fn an_explicit_embedding_provider_is_not_overridden_by_the_chat_provider() {
+        let mut settings = fixture();
+        settings.set_embed_provider(EmbedProvider::OpenAi);
+        settings.set_provider(ChatProvider::OpenRouter);
+        assert_eq!(settings.embed_provider, EmbedProvider::OpenAi);
     }
 
     #[test]

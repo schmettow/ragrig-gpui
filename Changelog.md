@@ -5,6 +5,54 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.13.0 — 2026-11-15
+
+### Breaking
+
+- **Settings are split by pane.** `rag_model_page` is removed. Use
+  `rag_chat_page` for chat, memory, and retrieval, and `rag_ingestion_page` for
+  embeddings, parsing, corpora, and references. Hosts that compose their own
+  pages use the new public groups (`rag_embedding_group`, `rag_parsing_group`,
+  `rag_corpora_group`, `rag_retrieval_group`, `rag_chat_group`,
+  `rag_memory_group`, `rag_profiles_group`, and `rag_apply_group`).
+  `rag_settings` and `rag_settings_page` now take a `Changes` closure.
+- **`external_services_page` is removed.** `docker_group`, `grobid_group`,
+  `ollama_group`, and `llamacpp_group` are public and are placed on the pane
+  that uses each service. GROBID belongs to the Workspace references page;
+  Ollama and llama.cpp can appear on both the Workspace and Scico sides.
+- **`rag_reference_processing_group` is retained** for hosts that place
+  `grobid_group` on the same page: it renders the processing switches without a
+  second server URL. `rag_references_group` still carries both.
+- `AgentInfo` gained `similarity_threshold` and lost `Eq` because of the float.
+
+### Added
+
+- **Component scopes.** `ComponentScope` splits pipeline status into
+  `Ingestion` (Workspace) and `Chat` (Scico). `AgentComponent` carries a scope
+  and `RagController::agent_components_in(scope)` filters for one pane.
+- **Provider following.** `RagSettings::set_provider` moves the embedder to the
+  chat provider while the embedder still points at the previous chat provider;
+  an explicitly chosen embedding provider is kept. `ChatProvider::embed_provider`
+  exposes the mapping.
+- **`AgentBar::settings_tooltip`** lets each pane label its gear.
+- **`rag_embedding_group`, `rag_parsing_group`, `rag_corpora_group`,
+  `rag_retrieval_group`, `rag_chat_group`, `rag_memory_group`,
+  `rag_profiles_group`, and `rag_apply_group`** are public for hosts that build
+  their own settings pages.
+- The Scico-side retrieval group shows the embedding provider and model
+  read-only and points to Workspace settings for changes.
+
+### Changed
+
+- **Hybrid retrieval switch moved to the embedder.** It now travels with the
+  embeddings into the Workspace pane. The retriever component shows the top-k
+  and similarity threshold instead.
+- **Sections split.** `RagSection` now distinguishes `Embedding`, `Corpora`,
+  `Grobid`, and `Services` in addition to `Workspace`, `Parsing`, `Chat`,
+  `Memory`, `Retrieval`, and `References`.
+- The embedder status detail reports dimensions instead of the retrieval
+  budget; the retriever reports `top-k · threshold`.
+
 ## v0.12.0 — 2026-11-15
 
 ### Added

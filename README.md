@@ -138,8 +138,10 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
 - **Settings** (right dock): workspace, provider and its model, generation,
   prompt, embeddings, retrieval, PDF backend, chunking, memory, and (with
   `grobid`) GROBID extraction plus the **Use @key citations** switch. With
-  `managed`, **External services** adds GROBID, Ollama, and llama.cpp source and
-  container controls. The provider dropdown covers Ollama, llama.cpp, DeepSeek,
+  `managed`, the GROBID, Ollama, and llama.cpp groups appear where the service
+  is used: GROBID in the reference group, Ollama and llama.cpp beside the chat
+  or embedding provider.
+  The provider dropdown covers Ollama, llama.cpp, DeepSeek,
   OpenAI, Claude, Mistral, and OpenRouter; the single **Model** row follows the
   selected provider and remembers each provider's model, and the **llama.cpp
   URL** row points the local connector at its `llama-server`. The
@@ -153,8 +155,8 @@ cargo run --manifest-path /path/to/ragrig-gpui/Cargo.toml --example ragchat
   pickers; **Maximum tokens** and **Context tokens** are sliders over powers of
   two. **Apply** validates and rebuilds.
   **Profiles** save/load JSON under `.ragrig/profiles`. Hosts that split the
-  page can use `rag_model_page` with their own Overview/Apply row; the
-  standalone `rag_settings_page` keeps Profiles and Apply.
+  page can use `rag_ingestion_page` and `rag_chat_page`, each with its own
+  Apply row; the standalone `rag_settings_page` keeps Profiles and one Apply.
 - **Pending changes**: pass a `Changes` closure (usually
   `RagSettings::dirty_since(&applied)`) and the page marks changed fields in
   bold violet, adds `●` to their sections, and shows an “Unsaved changes” line.
@@ -181,7 +183,7 @@ cargo run --example spike --no-default-features
 | Feature | Default | Purpose |
 |---|---|---|
 | `ragrig` | yes | `RagController`, `RagChat`, `RagSettings`, Tokio worker |
-| `managed` | no | Managed GROBID/Ollama/llama.cpp containers, probes, **External services** page |
+| `managed` | no | Managed GROBID/Ollama/llama.cpp containers, probes, service groups |
 | `grobid` | no | GROBID/BibTeX extraction, reference rows, `@key` citations, multi-select bulk actions (implies `managed`) |
 
 arXiv and Semantic Scholar discovery are deprecated and will not be ported.
@@ -204,11 +206,14 @@ ragrig-gpui
 ```
 
 - `AgentBar` renders one icon per pipeline component and reports
-  `AgentBarEvent::{Configure, Toggle, OpenSettings}`. A component can carry
-  `ComponentToggle` switches; the host owns the setting and reflects the new
-  value on the next render. `RagController::agent_components()` uses this for
-  **Chat memory** and **Hybrid retrieval** (off means `EmbedderSpec::None`, no
-  embedding model, and no vector search).
+  `AgentBarEvent::{Configure, Toggle, OpenSettings}`. Every component carries a
+  `ComponentScope`: ingestion components (embedder, store, parser, chunker,
+  references) belong to the Workspace pane, while chat, memory, and retrieval
+  belong to Scico. `RagController::agent_components_in(scope)` filters the list
+  for one pane. A component can carry `ComponentToggle` switches; the host owns
+  the setting and reflects the new value on the next render. **Chat memory**
+  lives on the memory component and **Hybrid retrieval** on the embedder (off
+  means `EmbedderSpec::None`, no embedding model, and no vector search).
 
 - `ChatView` keeps its own branding neutral: `ChatIdentity` (name plus
   `ChatIcon`) signs assistant rows, and `ChatIcon` accepts a catalog name, an
@@ -269,28 +274,38 @@ ragrig-gpui
   paper cannot push itself out of a 4096-token model. Shortened papers carry a
   `<scico:v1:truncated shown="…" total="…"/>` marker, which the chat
   prompt already understands.
-- `rag_settings(id, settings, controller, cx)` builds the complete page;
-  Apply is explicit. `rag_model_page(settings, controller, changes, prompt, cx)`
-  exposes the Chat/Retrieval/Parsing/Memory groups; pass `Some(PromptActions)`
-  for host-owned open/export buttons or `None` for the path field alone. The
-  Retrieval group's **Align with workspace** button copies the embedding model
-  recorded in the workspace index back into the form
+- `rag_settings(id, settings, controller, changes, cx)` builds one complete
+  page; Apply is explicit. Split settings are exported as
+  `rag_ingestion_page(settings, controller, changes, cx)` (embeddings, parsing,
+  corpora, references, apply) and
+  `rag_chat_page(settings, controller, changes, prompt, cx)` (chat, memory,
+  retrieval, apply). Pass `Some(PromptActions)` for host-owned open/export
+  buttons or `None` for the path field alone. Hosts that compose their own
+  pages take `rag_embedding_group`, `rag_parsing_group`, `rag_corpora_group`,
+  `rag_references_group` (or `rag_reference_processing_group` beside
+  `grobid_group`), `rag_chat_group`, `rag_memory_group`, `rag_retrieval_group`,
+  and `rag_profiles_group`. The reading-only retrieval page names the embedding
+  model set on the Workspace side.
+  The Embedding group's **Align with workspace** button copies the embedding
+  model recorded in the workspace index back into the form
   (`RagSettings::align_embed_model_with`).
   `RagSettings::embed_provider` selects Ollama, llama.cpp, OpenAI, Mistral, or
   OpenRouter embeddings, and `set_embed_provider` fills in the provider's
   default model when the field still holds the previous default.
-  `rag_references_group(settings, changes)` can be added to a host's Library
-  page; hosts that show `external_services_page` use
-  `rag_reference_processing_group` instead to avoid a duplicate server URL.
-  `external_services_page(settings, service, changes, cx)` and
-  `ExternalServices` own the discovery and Docker lifecycle for GROBID, Ollama,
-  and llama.cpp. Pull, startup, and Ollama model progress can be cancelled; the
-  service stops a container it started when the entity drops. Full GROBID
-  images are pulled as `linux/amd64`, so hosts on
-  Apple silicon or `linux/arm64` use emulation; `-crf` images stay native.
-  `path_setting`,
-  `token_slider`, `SettingRow`, `dirty_color`, and `dirty_header` are exported
-  for hosts that need the same pickers, 2^x token controls, or unsaved marks.
+  `RagSettings::set_provider` switches the chat model and lets the embedder
+  follow the chat provider while it has not been chosen explicitly.
+  **There is no External services page.** `docker_group`, `grobid_group`,
+  `ollama_group`, and `llamacpp_group` are individual groups that a host places
+  next to the pane that uses the service; Ollama and llama.cpp can therefore
+  appear on both sides, while GROBID belongs to the Workspace references page.
+  `ExternalServices` owns the discovery and Docker lifecycle. Pull, startup, and
+  Ollama model progress can be cancelled; the service stops a container it
+  started when the entity drops. Full GROBID images are pulled as
+  `linux/amd64`, so hosts on Apple silicon or `linux/arm64` use emulation;
+  `-crf` images stay native.
+  `path_setting`, `token_slider`, `SettingRow`, `dirty_color`, and
+  `dirty_header` are exported for hosts that need the same pickers, 2^x token
+  controls, or unsaved marks.
 - **First-run setup guide.** `onboarding_page(onboarding, settings, services,
   actions, cx)` walks through a local embedding model and its Ollama source,
   the chat provider/model with API-key guidance, model-aware context and answer

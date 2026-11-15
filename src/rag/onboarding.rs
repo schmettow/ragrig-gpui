@@ -546,7 +546,7 @@ fn chat_model_group(settings: &Entity<RagSettings>, provider: ChatProvider) -> S
         move |value, cx| {
             let provider = ChatProvider::from_label(&value).unwrap_or(ChatProvider::Ollama);
             writer.update(cx, |settings, cx| {
-                settings.provider = provider;
+                settings.set_provider(provider);
                 cx.notify();
             });
         },

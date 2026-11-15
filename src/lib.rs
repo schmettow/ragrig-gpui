@@ -15,11 +15,11 @@
 //!
 //! # Feature flags
 //!
-//! - `ragrig` (default): enables the Ragrig controller, full settings page,
+//! - `ragrig` (default): enables the Ragrig controller, split settings pages,
 //!   and the composite [`RagChat`] surface. The worker uses a dedicated Tokio
 //!   runtime thread.
-//! - `managed`: enables the **External services** settings page and the Docker
-//!   lifecycle for GROBID, Ollama, and llama.cpp. It implies `ragrig`.
+//! - `managed`: enables the Docker lifecycle for GROBID, Ollama, and llama.cpp
+//!   plus their setting groups. It implies `ragrig`.
 //! - `grobid`: additionally enables GROBID/BibTeX reference ingestion through
 //!   [`grobid-bibtex`](https://crates.io/crates/grobid-bibtex), the reference
 //!   rows, and their hover copy actions. It implies `managed`.
@@ -74,14 +74,14 @@ pub use services::{
     LLAMACPP_DISCOVERY_PORTS, MANAGED_GROBID_CONTAINER, MANAGED_GROBID_PORT, MANAGED_GROBID_URL,
     MANAGED_LLAMACPP_CONTAINER, MANAGED_LLAMACPP_PORT, MANAGED_LLAMACPP_URL,
     MANAGED_OLLAMA_CONTAINER, MANAGED_OLLAMA_PORT, MANAGED_OLLAMA_URL, OLLAMA_DISCOVERY_PORTS,
-    Probe, ProbeStatus, ServiceKind, ServiceLaunch, docker_message, existing_url,
-    external_services_page, llama_base_url, normalize_grobid_url, normalize_http_url,
-    normalize_url, ollama_models, probe,
+    Probe, ProbeStatus, ServiceKind, ServiceLaunch, docker_group, docker_message, existing_url,
+    llama_base_url, llamacpp_group, normalize_grobid_url, normalize_http_url, normalize_url,
+    ollama_group, ollama_models, probe,
 };
 #[cfg(feature = "grobid")]
 pub use services::{
     GrobidContainerStatus, GrobidDockerStatus, GrobidProbe, GrobidProbeStatus, GrobidService,
-    GrobidServiceEvent,
+    GrobidServiceEvent, grobid_group,
 };
 pub use session_picker::{SessionPicker, SessionPickerEvent};
 pub use setting_fields::{

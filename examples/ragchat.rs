@@ -1104,6 +1104,7 @@ impl Render for SettingsPanel {
                 ElementId::Name("ragchat-settings".into()),
                 settings,
                 controller,
+                no_changes(),
                 cx,
             ))
     }
