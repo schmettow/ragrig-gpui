@@ -6640,7 +6640,7 @@ dependencies = [
 
 [[package]]
 name = "ragrig-gpui"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -6649,6 +6649,7 @@ dependencies = [
  "biblatex",
  "blake3",
  "bollard",
+ "chunkedrs",
  "comrak",
  "dirs 5.0.1",
  "futures-util",

@@ -225,6 +225,13 @@ ragrig-gpui
   active embedder (`embedding_mismatch`). `reindex_corpus` discards the store
   and re-embeds every configured corpus with the current model;
   `forget_documents` drops files from the vector store without re-embedding.
+- `RagController::citation_check` runs a background Citation Check: it extracts
+  `@key` occurrences from a selected passage, requires each resolved PDF to be
+  in a corpus and embedded in the store, parses it, and asks an independent
+  generator for a 1–5 verdict plus 1–3 quotes. Up to four citations run at
+  once; `CitationCheckRow` / `CitationCheckSummary` carry the results, and
+  `QuoteQuality` reports the precise/fuzzy/no-match cascade. The chat session
+  is not touched, and `stop_citation_check` keeps completed rows.
 - `RagChat::new(window, cx, controller)` wires the M1 primitives and re-emits
   `RagChatEvent`s for status, source clicks, and copy.
 - `RagSettings::to_setup()` validates and converts to `RagrigConfig` plus a
@@ -314,7 +321,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo doc --no-deps --all-features
 ```
 
-Current suite: 208 library tests (four ignored: the GROBID end-to-end
+Current suite: 221 library tests (four ignored: the GROBID end-to-end
 test and the three Docker-dependent managed-container tests), 2 gallery tests,
 5 active spike tests plus one ignored typing benchmark, and 2 doctests. The
 GROBID end-to-end test runs with:

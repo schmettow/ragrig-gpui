@@ -14,6 +14,8 @@
 mod actor;
 mod attach;
 mod chat;
+#[cfg(feature = "grobid")]
+mod citation_check;
 mod config;
 mod controller;
 #[cfg(feature = "managed")]
@@ -40,6 +42,10 @@ pub use protocol::{
     AgentInfo, AttachmentSource, IngestPhase, IngestProgress, LibraryDocument, LibrarySnapshot,
     PendingAttachment, RagCommand, RagEvent, RagReply, RequestId, SessionInfo, SessionTurn,
     SyncSummary,
+};
+#[cfg(feature = "grobid")]
+pub use protocol::{
+    CitationCheckRequest, CitationCheckRow, CitationCheckSummary, CitationQuote, QuoteQuality,
 };
 pub use settings_page::{
     Changes, ExportPrompt, OpenPrompt, PromptActions, no_changes, rag_model_page,

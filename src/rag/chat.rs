@@ -418,6 +418,12 @@ impl RagChat {
             RagEvent::ReferencesFailed { message, .. } => {
                 cx.emit(RagChatEvent::Status(message.into()));
             }
+            #[cfg(feature = "grobid")]
+            RagEvent::CitationCheckStarted { .. }
+            | RagEvent::CitationCheckRow { .. }
+            | RagEvent::CitationCheckFinished { .. }
+            | RagEvent::CitationCheckFailed { .. }
+            | RagEvent::CitationCheckStopped { .. } => {}
             RagEvent::Sessions(_)
             | RagEvent::Library(_)
             | RagEvent::SyncStarted { .. }

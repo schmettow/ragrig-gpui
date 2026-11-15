@@ -15,6 +15,8 @@ use crate::model::{ChatRole, SourceRef};
 use crate::references::{
     CitationAttachment, ReferenceEntry, ReferenceOptions, ReferenceProgress, ReferenceReport,
 };
+#[cfg(feature = "grobid")]
+use std::ops::Range;
 
 use super::RagSetup;
 
@@ -161,6 +163,20 @@ pub enum RagCommand {
     #[cfg(feature = "grobid")]
     StopReferences {
         /// The extraction to stop.
+        id: RequestId,
+    },
+    /// Check every `@key` citation in a selected passage against its PDF.
+    #[cfg(feature = "grobid")]
+    CitationCheck {
+        /// Correlates the citation-check events.
+        id: RequestId,
+        /// The passage and the document it came from.
+        request: Box<CitationCheckRequest>,
+    },
+    /// Stop a running citation check. Completed rows are kept.
+    #[cfg(feature = "grobid")]
+    StopCitationCheck {
+        /// The check to stop.
         id: RequestId,
     },
     /// Reload the workspace bibliography without contacting GROBID.
@@ -360,6 +376,96 @@ pub struct AgentInfo {
     pub documents: usize,
 }
 
+/// A selected passage whose `@key` citations should be checked.
+#[cfg(feature = "grobid")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CitationCheckRequest {
+    /// Display name of the document that supplied the selection.
+    pub document: String,
+    /// Full document source, so the checker can expand context beyond the
+    /// selection.
+    pub document_text: String,
+    /// Character range of the selection in `document_text`.
+    pub selection: Range<usize>,
+}
+
+/// How well an evidence quote matches the parsed source.
+#[cfg(feature = "grobid")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuoteQuality {
+    /// Verbatim after whitespace and punctuation normalisation.
+    Accurate,
+    /// A close paraphrase or a near-verbatim window.
+    Approximate,
+    /// No matching window was found.
+    NotFound,
+}
+
+#[cfg(feature = "grobid")]
+impl QuoteQuality {
+    /// The label used in the report column.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Accurate => "accurate",
+            Self::Approximate => "approximate",
+            Self::NotFound => "not found",
+        }
+    }
+}
+
+/// One evidence quote and its algorithmic verification result.
+#[cfg(feature = "grobid")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CitationQuote {
+    /// The quote as returned by the model.
+    pub text: String,
+    /// Precise, fuzzy, or no match against the parsed PDF.
+    pub quality: QuoteQuality,
+}
+
+/// One checked citation occurrence.
+#[cfg(feature = "grobid")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CitationCheckRow {
+    /// 1-based occurrence index in the selection.
+    pub index: usize,
+    /// The citation key, including its leading `@`.
+    pub citation: String,
+    /// The sentence around the citation, for the report.
+    pub claim: String,
+    /// Verdict 1-5, when the model answered.
+    pub verdict: Option<u8>,
+    /// Canonical verdict label.
+    pub verdict_label: Option<String>,
+    /// The model's explanation, when provided.
+    pub explanation: String,
+    /// 1-3 evidence quotes and their match quality.
+    pub quotes: Vec<CitationQuote>,
+    /// Human-readable cited source (title/authors/year or file name).
+    pub source: String,
+    /// Everything that went wrong for this citation, including excerpt
+    /// fallbacks and truncated context.
+    pub error: Option<String>,
+}
+
+/// Totals for one citation-check run.
+#[cfg(feature = "grobid")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CitationCheckSummary {
+    /// Citation occurrences found.
+    pub total: usize,
+    /// Rows with a verdict.
+    pub checked: usize,
+    /// Rows that failed before a verdict.
+    pub errors: usize,
+    /// Quotes matched precisely.
+    pub accurate: usize,
+    /// Quotes matched fuzzily.
+    pub approximate: usize,
+    /// Quotes with no match.
+    pub not_found: usize,
+}
+
 /// Events emitted by the worker and re-emitted by the controller.
 #[derive(Clone, Debug)]
 pub enum RagEvent {
@@ -497,6 +603,48 @@ pub enum RagEvent {
         id: RequestId,
         /// Error chain.
         message: String,
+    },
+    /// A citation check started.
+    #[cfg(feature = "grobid")]
+    CitationCheckStarted {
+        /// Request identity.
+        id: RequestId,
+        /// Citation occurrences found in the selection.
+        total: usize,
+        /// Document that supplied the selection.
+        document: String,
+        /// Character range of the selection in the document.
+        selection: Range<usize>,
+    },
+    /// One citation finished checking.
+    #[cfg(feature = "grobid")]
+    CitationCheckRow {
+        /// Request identity.
+        id: RequestId,
+        /// The completed row.
+        row: CitationCheckRow,
+    },
+    /// The citation check finished; rows may contain per-citation errors.
+    #[cfg(feature = "grobid")]
+    CitationCheckFinished {
+        /// Request identity.
+        id: RequestId,
+        /// Counts for the status line and the report summary.
+        summary: CitationCheckSummary,
+    },
+    /// The citation check could not start or had to stop before any row.
+    #[cfg(feature = "grobid")]
+    CitationCheckFailed {
+        /// Request identity.
+        id: RequestId,
+        /// Error chain.
+        message: String,
+    },
+    /// The citation check was cancelled; completed rows are kept.
+    #[cfg(feature = "grobid")]
+    CitationCheckStopped {
+        /// Request identity.
+        id: RequestId,
     },
     /// The `@key` mentions of a question were resolved before generation.
     #[cfg(feature = "grobid")]

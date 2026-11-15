@@ -33,6 +33,11 @@ pub use crate::rag::{
 };
 
 #[cfg(feature = "grobid")]
+pub use crate::rag::{
+    CitationCheckRequest, CitationCheckRow, CitationCheckSummary, CitationQuote, QuoteQuality,
+};
+
+#[cfg(feature = "grobid")]
 pub use crate::references::{
     CitationAttachment, ReferenceAction, ReferenceCopy, ReferenceEntry, ReferenceOptions,
     ReferenceProgress, ReferenceReport, ReferenceRow, ReferenceSelection, ReferenceSelectionBar,

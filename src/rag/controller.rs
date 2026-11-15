@@ -38,6 +38,9 @@ pub struct RagController {
     /// Whether the agent was rebuilt by [`apply`](Self::apply) rather than a
     /// session command, so hosts should keep their pending context.
     session_preserves_context: bool,
+    /// The running citation check, if any.
+    #[cfg(feature = "grobid")]
+    citation_check: Option<RequestId>,
     ingest: Option<IngestProgress>,
     sync_request: Option<RequestId>,
     busy: bool,
@@ -94,6 +97,8 @@ impl RagController {
             memory_enabled,
             hybrid,
             session_preserves_context: false,
+            #[cfg(feature = "grobid")]
+            citation_check: None,
             ingest: None,
             sync_request: None,
             busy: false,
@@ -281,6 +286,36 @@ impl RagController {
             cx,
         )?;
         Ok(id)
+    }
+
+    /// Check every `@key` citation in a selected passage against its PDF.
+    #[cfg(feature = "grobid")]
+    pub fn citation_check(
+        &mut self,
+        request: crate::rag::CitationCheckRequest,
+        cx: &mut Context<Self>,
+    ) -> Result<RequestId, String> {
+        let id = self.request_id();
+        self.send(
+            RagCommand::CitationCheck {
+                id,
+                request: Box::new(request),
+            },
+            cx,
+        )?;
+        Ok(id)
+    }
+
+    /// Stop the running citation check. Completed rows are kept.
+    #[cfg(feature = "grobid")]
+    pub fn stop_citation_check(&mut self, id: RequestId, cx: &mut Context<Self>) {
+        self.send_quiet(RagCommand::StopCitationCheck { id }, cx);
+    }
+
+    /// The running citation check, if any.
+    #[cfg(feature = "grobid")]
+    pub fn citation_check_request(&self) -> Option<RequestId> {
+        self.citation_check
     }
 
     /// Stop the running reference extraction.
@@ -697,6 +732,22 @@ impl RagController {
             }
             #[cfg(feature = "grobid")]
             RagEvent::Citations { .. } => {}
+            #[cfg(feature = "grobid")]
+            RagEvent::CitationCheckStarted { id, .. } => {
+                self.citation_check = Some(*id);
+                self.last_error = None;
+            }
+            #[cfg(feature = "grobid")]
+            RagEvent::CitationCheckRow { .. } => {}
+            #[cfg(feature = "grobid")]
+            RagEvent::CitationCheckFinished { .. }
+            | RagEvent::CitationCheckFailed { .. }
+            | RagEvent::CitationCheckStopped { .. } => {
+                self.citation_check = None;
+                if let RagEvent::CitationCheckFailed { message, .. } = &event {
+                    self.last_error = Some(message.clone());
+                }
+            }
             #[cfg(feature = "grobid")]
             RagEvent::ReferencesStarted { id, folder } => {
                 self.reference_request = Some(*id);

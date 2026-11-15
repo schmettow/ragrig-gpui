@@ -1,6 +1,6 @@
 [package]
 name = "ragrig-gpui"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -29,9 +29,11 @@ grobid = [
 ]
 
 [dependencies]
+anyhow = "1"
 async-channel = "2"
 blake3 = "1.5"
 bollard = { version = "0.21", optional = true }
+chunkedrs = "2.1"
 comrak = "0.22"
 dirs = "5"
 futures-util = { version = "0.3", optional = true }
@@ -50,7 +52,6 @@ ashpd = { version = "0.13", default-features = false, features = ["async-io", "f
 url = "2"
 
 [dev-dependencies]
-anyhow = "1"
 async-trait = "0.1"
 gpui-kit = { version = "0.9.1", features = ["test-support"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }

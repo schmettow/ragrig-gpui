@@ -276,6 +276,12 @@ impl Roundtrip {
         RoundtripContext::document_with_limit(document.buffer(), limit)
     }
 
+    /// The active selection with its full document snapshot.
+    #[must_use]
+    pub fn selection(&self, window: &mut Window, cx: &mut App) -> Option<SelectionSnapshot> {
+        self.host.selection(window, cx)
+    }
+
     /// The active selection as a prompt container.
     #[must_use]
     pub fn selection_context(

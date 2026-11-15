@@ -5,6 +5,43 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.12.0 — 2026-11-15
+
+### Added
+
+- **Citation Check.** `RagController::citation_check` starts a background
+  check of every `@key` occurrence in a selected passage. The worker resolves
+  keys against the bibliography, accepts only PDFs that are both in a corpus
+  and embedded in the vector store, parses the PDF, expands a three-before /
+  two-after sentence window capped at 500 tokens, and asks the configured chat
+  model for a verdict plus 1-3 evidence quotes
+  (`src/rag/citation_check.rs`, `src/rag/actor.rs`, `src/rag/controller.rs`).
+- **Concurrent checks and per-row errors.** Up to four citations are checked
+  at once; each `CitationCheckRow` carries its own error text, including a
+  full-PDF-to-excerpt fallback and a truncated context note. `StopCitationCheck`
+  cancels the run and keeps completed rows (`src/rag/protocol.rs`).
+- **Quote verification cascade.** Evidence quotes are first matched precisely
+  (whitespace, smart punctuation, and PDF hyphenation normalised), then with a
+  token-window fuzzy match. Each quote reports `accurate`, `approximate`, or
+  `not found` (`QuoteQuality`).
+- `CitationCheckRequest`, `CitationCheckRow`, `CitationCheckSummary`,
+  `CitationQuote`, and `QuoteQuality` are exported through the crate root and
+  prelude.
+
+### Changed
+
+- `chunkedrs` is now a direct dependency for token-accurate context and source
+  budgets. `anyhow` moved from the dev-dependencies to the regular
+  dependencies because the checker returns its errors through `anyhow`
+  (`Cargo.toml`).
+
+### Quality
+
+Focused tests cover Markdown-aware mention extraction, selection scoping,
+three-before/two-after context windows, exact and fuzzy quote matching,
+hyphenation and smart quotes, JSON parsing with code fences, long-source
+fallbacks, and a fake generator producing both a checked row and an error row.
+
 ## v0.11.0 — 2026-11-14
 
 ### Added

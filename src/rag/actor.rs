@@ -31,6 +31,10 @@ use ragrig::{
     types::{AttachedDocument, ParseConfig, Provider},
 };
 
+#[cfg(feature = "grobid")]
+use super::CitationCheckRequest;
+#[cfg(feature = "grobid")]
+use super::citation_check::{self, CitationCheckEnv};
 use crate::model::SourceRef;
 #[cfg(feature = "grobid")]
 use crate::references::{
@@ -64,6 +68,7 @@ struct Shared {
     cancels: Mutex<HashMap<RequestId, CancellationToken>>,
     generating: AtomicBool,
     syncing: AtomicBool,
+    checking: AtomicBool,
     #[cfg(feature = "grobid")]
     referencing: AtomicBool,
     /// Bibliography view cached across questions; invalidated by file changes.
@@ -118,6 +123,7 @@ async fn run(
         cancels: Mutex::new(HashMap::new()),
         generating: AtomicBool::new(false),
         syncing: AtomicBool::new(false),
+        checking: AtomicBool::new(false),
         #[cfg(feature = "grobid")]
         referencing: AtomicBool::new(false),
         #[cfg(feature = "grobid")]
@@ -232,6 +238,40 @@ async fn handle(command: RagCommand, shared: Arc<Shared>, events: Sender<RagEven
         }
         RagCommand::RefreshSessions => send_sessions(&shared, &events).await,
         RagCommand::RefreshLibrary => send_library(&shared, &events).await,
+        #[cfg(feature = "grobid")]
+        RagCommand::CitationCheck { id, request } => {
+            if shared.syncing.load(Ordering::Acquire) {
+                let _ = events
+                    .send(RagEvent::CitationCheckFailed {
+                        id,
+                        message: "wait for the ingestion to finish".to_owned(),
+                    })
+                    .await;
+                return;
+            }
+            if shared.checking.swap(true, Ordering::AcqRel) {
+                let _ = events
+                    .send(RagEvent::CitationCheckFailed {
+                        id,
+                        message: "a citation check is already running".to_owned(),
+                    })
+                    .await;
+                return;
+            }
+            let cancel = CancellationToken::new();
+            shared
+                .cancels
+                .lock()
+                .expect("cancel map")
+                .insert(id, cancel.clone());
+            tokio::spawn(run_citation_check(shared, id, *request, cancel, events));
+        }
+        #[cfg(feature = "grobid")]
+        RagCommand::StopCitationCheck { id } => {
+            if let Some(cancel) = shared.cancels.lock().expect("cancel map").remove(&id) {
+                cancel.cancel();
+            }
+        }
         RagCommand::ForgetDocuments { corpus, documents } => {
             forget_documents(&shared, &events, corpus, documents).await;
         }
@@ -844,6 +884,71 @@ fn sources(response: &RagResponse) -> Vec<SourceRef> {
         sources.push(source);
     }
     sources
+}
+
+#[cfg(feature = "grobid")]
+async fn run_citation_check(
+    shared: Arc<Shared>,
+    id: RequestId,
+    request: CitationCheckRequest,
+    cancel: CancellationToken,
+    events: Sender<RagEvent>,
+) {
+    let (env, hybrid) = {
+        let setup = shared.setup.lock().expect("setup");
+        let base = references::link_base(&setup.config.workspace)
+            .unwrap_or_else(|| setup.config.workspace.clone());
+        let env = CitationCheckEnv {
+            bibliography: setup
+                .bibliography
+                .clone()
+                .unwrap_or_else(|| setup.config.workspace.join(".ragrig/references.bib")),
+            base,
+            corpora: Vec::new(),
+            parse: setup.config.parse.clone(),
+            chat: setup.config.chat.clone(),
+        };
+        (env, setup.hybrid)
+    };
+    if !hybrid {
+        let _ = events
+            .send(RagEvent::CitationCheckFailed {
+                id,
+                message: "enable hybrid retrieval before checking citations".to_owned(),
+            })
+            .await;
+        finish_citation_check(&shared, id);
+        return;
+    }
+    if shared.session.lock().await.is_none() {
+        let _ = events
+            .send(RagEvent::CitationCheckFailed {
+                id,
+                message: "the agent is not ready".to_owned(),
+            })
+            .await;
+        finish_citation_check(&shared, id);
+        return;
+    }
+    let mut env = env;
+    env.corpora = shared
+        .corpora
+        .lock()
+        .expect("corpus map")
+        .iter()
+        .filter(|(name, _)| !name.starts_with("references:"))
+        .map(|(_, folder)| folder.clone())
+        .collect();
+
+    let library = library_snapshot(&shared).await;
+    citation_check::run(id, request, env, library, events, cancel).await;
+    finish_citation_check(&shared, id);
+}
+
+#[cfg(feature = "grobid")]
+fn finish_citation_check(shared: &Arc<Shared>, id: RequestId) {
+    shared.checking.store(false, Ordering::Release);
+    shared.cancels.lock().expect("cancel map").remove(&id);
 }
 
 async fn forget_documents(
@@ -1476,7 +1581,7 @@ async fn build_session(setup: &RagSetup) -> Result<AgentSession, String> {
 }
 
 /// Keep the selected PDF backend plus an optional sloppy fallback.
-fn filtered_parsers(config: &ParseConfig) -> Vec<Box<dyn ragrig::DocumentParser>> {
+pub(crate) fn filtered_parsers(config: &ParseConfig) -> Vec<Box<dyn ragrig::DocumentParser>> {
     let selected = match config.pdf_parser {
         ragrig::PdfParserBackend::Unpdf => "unpdf",
         ragrig::PdfParserBackend::Sink => "pdfsink",
@@ -2024,6 +2129,41 @@ mod tests {
             Some(corpus.join("note.md").as_path())
         );
         assert!(snapshot.chunks >= 1);
+
+        commands.close();
+        handle.join().expect("worker thread");
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[cfg(feature = "grobid")]
+    #[tokio::test]
+    async fn a_citation_check_needs_hybrid_retrieval() {
+        let workspace = temp_workspace("citation-off");
+        let (session, _) = test_session(&workspace, answer_chunks(), Duration::ZERO).await;
+        let mut setup = setup(&workspace);
+        setup.hybrid = false;
+        let (commands, events, handle) = spawn_with(setup, session);
+        let _ = wait_for(&events, |event| matches!(event, RagEvent::AgentReady(_))).await;
+
+        commands
+            .send(RagCommand::CitationCheck {
+                id: RequestId::new(7),
+                request: Box::new(CitationCheckRequest {
+                    document: "draft.md".to_owned(),
+                    document_text: "A claim @Key here.".to_owned(),
+                    selection: 0..17,
+                }),
+            })
+            .await
+            .expect("send check");
+        let event = wait_for(&events, |event| {
+            matches!(event, RagEvent::CitationCheckFailed { .. })
+        })
+        .await;
+        let RagEvent::CitationCheckFailed { message, .. } = event else {
+            unreachable!()
+        };
+        assert!(message.contains("hybrid retrieval"));
 
         commands.close();
         handle.join().expect("worker thread");
