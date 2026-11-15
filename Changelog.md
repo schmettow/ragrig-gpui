@@ -37,10 +37,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Quality
 
-Focused tests cover Markdown-aware mention extraction, selection scoping,
-three-before/two-after context windows, exact and fuzzy quote matching,
-hyphenation and smart quotes, JSON parsing with code fences, long-source
-fallbacks, and a fake generator producing both a checked row and an error row.
+Release validation on 2026-11-15 (Cargo 1.99.0, rustc 1.99.0).
+
+**Test coverage.** `cargo llvm-cov --all-features --summary-only` (doctests are
+not measured on stable Rust):
+
+| Metric | Covered | Total | Cover |
+| --- | ---: | ---: | ---: |
+| Regions | 15,819 | 27,399 | 57.74% |
+| Functions | 1,152 | 2,049 | 56.22% |
+| Lines | 9,621 | 17,367 | 55.40% |
+
+`src/rag/citation_check.rs` is at 60.45% lines; the pure helpers for mentions,
+context windows, source budgets, answer parsing, and quote matching are
+directly covered, while the worker-driven `run` loop depends on the GPUI
+scheduler. `src/rag/actor.rs` is at 70.50%, `src/rag/config.rs` at 91.07%, and
+`src/references.rs` at 84.15%. The headless GPUI surfaces remain outside the
+suite (`src/rag/chat.rs` 5.94%, `src/rag/settings_page.rs` 0%,
+`src/services/settings_page.rs` 0%), and the Docker lifecycle
+(`src/services/managed.rs` 10.44%) is gated behind `#[ignore]`d daemon tests.
+
+**Tests.** `cargo test --all-features`: 230 passed, 0 failed, 5 ignored (221
+lib with 4 ignored, 2 gallery, 5 spike with one measurement ignored, and 2
+doctests). `cargo test` (default features): 158 passed, 1 ignored (149 lib, 2
+gallery, 5 spike with one measurement ignored, and 2 doctests).
+
+**Checks.** `cargo fmt --check`, `cargo check --all-targets --all-features`,
+`cargo test --all-features`, `cargo clippy --all-targets --all-features -- -D
+warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`,
+and `cargo package --list` (50 files) are green. `cargo publish --dry-run`
+packages and verifies the crate (50 files, 1.3 MiB, 290.6 KiB compressed) and
+aborts the upload as expected. The dry-run verification build exposed a
+default-feature dead-code warning for the grobid-only citation-check flag;
+the field is now feature-gated instead of allowed.
+
+**Publication order.** `ragrig` 1.4.0, `grobid-bibtex` 0.4.0, `chunkedrs`
+2.1.1, and the remaining dependency set are already on crates.io. Publish
+ragrig-gpui 0.12.0 before scico 0.11.0, which requires `ragrig-gpui =
+"^0.12.0"`.
 
 ## v0.11.0 — 2026-11-14
 

@@ -68,6 +68,7 @@ struct Shared {
     cancels: Mutex<HashMap<RequestId, CancellationToken>>,
     generating: AtomicBool,
     syncing: AtomicBool,
+    #[cfg(feature = "grobid")]
     checking: AtomicBool,
     #[cfg(feature = "grobid")]
     referencing: AtomicBool,
@@ -123,6 +124,7 @@ async fn run(
         cancels: Mutex::new(HashMap::new()),
         generating: AtomicBool::new(false),
         syncing: AtomicBool::new(false),
+        #[cfg(feature = "grobid")]
         checking: AtomicBool::new(false),
         #[cfg(feature = "grobid")]
         referencing: AtomicBool::new(false),
