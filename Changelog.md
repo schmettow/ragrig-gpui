@@ -20,8 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Dependencies
 
 - `ragrig` is temporarily path-linked to `../ragrig` to build against the
-  unreleased `BatchAgent` (`Cargo.toml`).  **Release blocker:** publish
-  `ragrig` with `BatchAgent` first, then pin this dependency to that version
+  unreleased `1.5.0` `BatchAgent` (`Cargo.toml`).  **Release blocker:**
+  publish `ragrig` 1.5.0 first, then pin this dependency to that version
   and drop the `path`.
 
 ## v0.13.0 — 2026-11-15
