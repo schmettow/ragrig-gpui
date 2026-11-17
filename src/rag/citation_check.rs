@@ -9,14 +9,14 @@ use std::{
     collections::{HashMap, HashSet},
     ops::Range,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use anyhow::anyhow;
 use async_channel::Sender;
-use futures_util::{StreamExt as _, stream};
+use futures_util::StreamExt as _;
 use ragrig::{
-    ChatAgentSpec, DocumentParsers, Generator,
+    BatchAgent, BatchJob, ChatAgentSpec, DocumentParsers,
     parsers::extract_text,
     progress::{Cancel as _, CancellationToken},
     types::{ChatConfig, ParseConfig},
@@ -227,19 +227,16 @@ pub(crate) async fn run(
         }
     }
 
-    let mut checks = stream::iter(
-        pending
-            .into_iter()
-            .map(|prepared| check_one(prepared, generator.as_ref(), &cancel)),
-    )
-    .buffer_unordered(CHECK_CONCURRENCY);
+    let agent = BatchAgent::new(generator).with_concurrency(CHECK_CONCURRENCY);
+    let job = CitationBatch;
+    let mut checks = agent.stream(pending, &job, &cancel);
     while let Some(result) = checks.next().await {
         if cancel.is_cancelled() {
             drop(checks);
             let _ = events.send(RagEvent::CitationCheckStopped { id }).await;
             return;
         }
-        match result {
+        match result.row {
             Ok(row) => {
                 if row.verdict.is_some() {
                     summary.checked += 1;
@@ -300,92 +297,111 @@ impl PreparedCitation {
     }
 }
 
-async fn check_one(
-    prepared: PreparedCitation,
-    generator: &dyn Generator,
-    cancel: &CancellationToken,
-) -> anyhow::Result<CitationCheckRow> {
-    if cancel.is_cancelled() {
-        return Err(anyhow!(ragrig::Cancelled));
-    }
-    let Some(source) = &prepared.source else {
-        return Ok(prepared.failed_row(&prepared.errors));
-    };
-    let mut errors = prepared.errors.clone();
-    let claim_tokens = token_count(&prepared.claim_context);
-    let available = source_budget(prepared.context_tokens, claim_tokens);
-    let material = source_material(source, &prepared.claim_context, available, &mut errors);
-    if material.is_empty() {
-        errors.push("the cited PDF produced no text".to_owned());
-        return Ok(prepared.failed_row(&errors));
-    }
-    let prompt = build_prompt(
-        &prepared.claim_context,
-        &prepared.citation,
-        &prepared.source_label,
-        &material,
-    );
-    let raw = match generate(generator, &prompt, cancel).await {
-        Ok(raw) => raw,
-        Err(error) if error.downcast_ref::<ragrig::Cancelled>().is_some() => {
-            return Err(error);
-        }
-        Err(error) => {
-            errors.push(format!("check failed: {error:#}"));
-            return Ok(prepared.failed_row(&errors));
-        }
-    };
-    let answer = match parse_answer(&raw) {
-        Ok(answer) => answer,
-        Err(error) => {
-            errors.push(error);
-            return Ok(prepared.failed_row(&errors));
-        }
-    };
-
-    let mut quotes = Vec::new();
-    for text in answer.quotes.into_iter().take(3) {
-        let quality = verify_quote(source, &text);
-        quotes.push(super::CitationQuote { text, quality });
-    }
-    if quotes.is_empty() {
-        errors.push("model returned no evidence quotes".to_owned());
-    }
-    if !quotes.is_empty()
-        && quotes
-            .iter()
-            .all(|quote| quote.quality == QuoteQuality::NotFound)
-    {
-        errors.push("no quote could be verified against the parsed PDF".to_owned());
-    }
-
-    Ok(CitationCheckRow {
-        index: prepared.index,
-        citation: prepared.citation,
-        claim: prepared.claim,
-        verdict: Some(answer.verdict),
-        verdict_label: Some(verdict_label(answer.verdict).to_owned()),
-        explanation: answer.explanation,
-        quotes,
-        source: prepared.source_label,
-        error: (!errors.is_empty()).then(|| errors.join("; ")),
-    })
+/// The rendered citation prompt plus warnings collected while fitting the
+/// source into the model's context window.
+struct CitationPrompt {
+    text: String,
+    errors: Vec<String>,
 }
 
-async fn generate(
-    generator: &dyn Generator,
-    prompt: &str,
-    cancel: &CancellationToken,
-) -> anyhow::Result<String> {
-    let answer = Mutex::new(String::new());
-    generator
-        .generate_stream_with_cancel(
-            prompt,
-            &|token| answer.lock().expect("citation answer").push_str(&token),
-            cancel,
-        )
-        .await?;
-    Ok(answer.into_inner().expect("citation answer"))
+impl AsRef<str> for CitationPrompt {
+    fn as_ref(&self) -> &str {
+        &self.text
+    }
+}
+
+/// One item of the citation-check batch: a prepared citation whose source is
+/// already parsed and in memory.
+struct CitationBatch;
+
+impl BatchJob for CitationBatch {
+    type Item = PreparedCitation;
+    type Prompt = CitationPrompt;
+    type Row = CitationCheckRow;
+
+    fn prepare(&self, prepared: &PreparedCitation) -> anyhow::Result<CitationPrompt> {
+        let Some(source) = prepared.source.as_ref() else {
+            return Err(anyhow!("citation has no source"));
+        };
+        let mut errors = prepared.errors.clone();
+        let claim_tokens = token_count(&prepared.claim_context);
+        let available = source_budget(prepared.context_tokens, claim_tokens);
+        let material = source_material(source, &prepared.claim_context, available, &mut errors);
+        if material.is_empty() {
+            errors.push("the cited PDF produced no text".to_owned());
+            return Err(anyhow!(errors.join("; ")));
+        }
+        Ok(CitationPrompt {
+            text: build_prompt(
+                &prepared.claim_context,
+                &prepared.citation,
+                &prepared.source_label,
+                &material,
+            ),
+            errors,
+        })
+    }
+
+    fn finish(
+        &self,
+        prepared: &PreparedCitation,
+        prompt: &CitationPrompt,
+        answer: &str,
+    ) -> anyhow::Result<CitationCheckRow> {
+        let mut errors = prompt.errors.clone();
+        let answer = match parse_answer(answer) {
+            Ok(answer) => answer,
+            Err(error) => {
+                errors.push(error);
+                return Ok(prepared.failed_row(&errors));
+            }
+        };
+        let Some(source) = prepared.source.as_ref() else {
+            errors.push("citation has no source".to_owned());
+            return Ok(prepared.failed_row(&errors));
+        };
+
+        let mut quotes = Vec::new();
+        for text in answer.quotes.into_iter().take(3) {
+            let quality = verify_quote(source, &text);
+            quotes.push(super::CitationQuote { text, quality });
+        }
+        if quotes.is_empty() {
+            errors.push("model returned no evidence quotes".to_owned());
+        }
+        if !quotes.is_empty()
+            && quotes
+                .iter()
+                .all(|quote| quote.quality == QuoteQuality::NotFound)
+        {
+            errors.push("no quote could be verified against the parsed PDF".to_owned());
+        }
+
+        Ok(CitationCheckRow {
+            index: prepared.index,
+            citation: prepared.citation.clone(),
+            claim: prepared.claim.clone(),
+            verdict: Some(answer.verdict),
+            verdict_label: Some(verdict_label(answer.verdict).to_owned()),
+            explanation: answer.explanation,
+            quotes,
+            source: prepared.source_label.clone(),
+            error: (!errors.is_empty()).then(|| errors.join("; ")),
+        })
+    }
+
+    fn fallback(
+        &self,
+        prepared: &PreparedCitation,
+        prompt: Option<&CitationPrompt>,
+        error: &anyhow::Error,
+    ) -> Option<CitationCheckRow> {
+        let mut errors = prompt
+            .map(|prompt| prompt.errors.clone())
+            .unwrap_or_else(|| prepared.errors.clone());
+        errors.push(format!("check failed: {error:#}"));
+        Some(prepared.failed_row(&errors))
+    }
 }
 
 fn answer_budget(context_tokens: usize) -> usize {
@@ -1196,6 +1212,7 @@ fn normalize_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ragrig::Generator;
 
     #[derive(Clone, Debug)]
     struct FakeGenerator {
@@ -1239,6 +1256,14 @@ mod tests {
         }
     }
 
+    async fn check_one(prepared: PreparedCitation, generator: FakeGenerator) -> CitationCheckRow {
+        let agent = BatchAgent::new(Box::new(generator));
+        let mut results = agent
+            .run(vec![prepared], &CitationBatch, &CancellationToken::new())
+            .await;
+        results.pop().expect("one row").row.expect("row")
+    }
+
     #[tokio::test]
     async fn a_fake_model_produces_a_checked_row() {
         let generator = FakeGenerator {
@@ -1246,14 +1271,11 @@ mod tests {
                 .to_owned(),
             fail: false,
         };
-        let cancel = CancellationToken::new();
         let row = check_one(
             prepared("The treatment reduced response times in the second trial."),
-            &generator,
-            &cancel,
+            generator,
         )
-        .await
-        .expect("row");
+        .await;
         assert_eq!(row.verdict, Some(5));
         assert_eq!(row.verdict_label.as_deref(), Some("empirically justified"));
         assert_eq!(row.quotes[0].quality, QuoteQuality::Accurate);
@@ -1266,10 +1288,7 @@ mod tests {
             answer: String::new(),
             fail: true,
         };
-        let cancel = CancellationToken::new();
-        let row = check_one(prepared("Source text."), &generator, &cancel)
-            .await
-            .expect("row");
+        let row = check_one(prepared("Source text."), generator).await;
         assert_eq!(row.verdict, None);
         assert!(
             row.error

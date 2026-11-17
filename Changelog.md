@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- **Citation Check runs on `ragrig::BatchAgent`.** The per-citation worker is
+  now a `BatchJob` (`CitationBatch`): `prepare` fits the source into the
+  model budget and builds the prompt, `finish` parses the verdict and
+  verifies the evidence quotes, and `fallback` turns a failed item into a
+  row with `check failed: …` instead of dropping it (`src/rag/citation_check.rs`).
+  Streaming, concurrency (4), per-row errors, and cancellation behaviour are
+  unchanged; the local `check_one` fan-out is gone.
+
+### Dependencies
+
+- `ragrig` is temporarily path-linked to `../ragrig` to build against the
+  unreleased `BatchAgent` (`Cargo.toml`).  **Release blocker:** publish
+  `ragrig` with `BatchAgent` first, then pin this dependency to that version
+  and drop the `path`.
+
 ## v0.13.0 — 2026-11-15
 
 ### Breaking
