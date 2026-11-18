@@ -45,7 +45,8 @@ pub use protocol::{
 };
 #[cfg(feature = "grobid")]
 pub use protocol::{
-    CitationCheckRequest, CitationCheckRow, CitationCheckSummary, CitationQuote, QuoteQuality,
+    CitationCheckRequest, CitationCheckRow, CitationCheckSummary, CitationProgress, CitationQuote,
+    QuoteQuality,
 };
 pub use settings_page::{
     Changes, ExportPrompt, OpenPrompt, PromptActions, no_changes, rag_apply_group, rag_chat_group,

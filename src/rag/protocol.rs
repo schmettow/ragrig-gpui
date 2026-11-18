@@ -468,6 +468,49 @@ pub struct CitationCheckSummary {
     pub not_found: usize,
 }
 
+/// Live progress of a running citation check.
+///
+/// Derived from the batch worker's progress events, so it advances as each
+/// citation finishes — not only when the row reaches the UI.  Mentions that
+/// never reach the model (unresolvable keys, unparsable PDFs) already count as
+/// `done` and `failed` before the first model call.
+#[cfg(feature = "grobid")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CitationProgress {
+    /// Citation occurrences finished so far.
+    pub done: usize,
+    /// Of `done`, the ones that produced an error row.
+    pub failed: usize,
+    /// Citation occurrences in the selection.
+    pub total: usize,
+}
+
+impl CitationProgress {
+    /// Completion in `0.0..=1.0`, when the total is known.
+    pub fn fraction(&self) -> f32 {
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.done as f32 / self.total as f32).clamp(0.0, 1.0)
+        }
+    }
+
+    /// One-line description for a status bar or progress row.
+    pub fn summary(&self) -> String {
+        if self.total == 0 {
+            return "Checking citations…".to_owned();
+        }
+        if self.failed > 0 {
+            format!(
+                "Checking citations · {}/{} · {} failed",
+                self.done, self.total, self.failed
+            )
+        } else {
+            format!("Checking citations · {}/{}", self.done, self.total)
+        }
+    }
+}
+
 /// Events emitted by the worker and re-emitted by the controller.
 #[derive(Clone, Debug)]
 pub enum RagEvent {
@@ -626,6 +669,14 @@ pub enum RagEvent {
         /// The completed row.
         row: CitationCheckRow,
     },
+    /// The running citation check advanced.
+    #[cfg(feature = "grobid")]
+    CitationCheckProgress {
+        /// Request identity.
+        id: RequestId,
+        /// Completed and failed occurrences so far.
+        progress: CitationProgress,
+    },
     /// The citation check finished; rows may contain per-citation errors.
     #[cfg(feature = "grobid")]
     CitationCheckFinished {
@@ -658,4 +709,37 @@ pub enum RagEvent {
     },
     /// A non-fatal notice for the host's status line.
     Notice(String),
+}
+
+#[cfg(all(test, feature = "grobid"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn citation_progress_reports_a_fraction() {
+        let progress = CitationProgress {
+            done: 3,
+            failed: 0,
+            total: 12,
+        };
+        assert!((progress.fraction() - 0.25).abs() < f32::EPSILON);
+        assert_eq!(progress.summary(), "Checking citations · 3/12");
+    }
+
+    #[test]
+    fn citation_progress_without_a_total_is_zero() {
+        assert_eq!(CitationProgress::default().fraction(), 0.0);
+        assert_eq!(CitationProgress::default().summary(), "Checking citations…");
+    }
+
+    #[test]
+    fn citation_progress_mentions_failures() {
+        let progress = CitationProgress {
+            done: 4,
+            failed: 1,
+            total: 4,
+        };
+        assert_eq!(progress.fraction(), 1.0);
+        assert_eq!(progress.summary(), "Checking citations · 4/4 · 1 failed");
+    }
 }

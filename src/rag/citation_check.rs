@@ -10,6 +10,8 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
 };
 
 use anyhow::anyhow;
@@ -18,7 +20,7 @@ use futures_util::StreamExt as _;
 use ragrig::{
     BatchAgent, BatchJob, ChatAgentSpec, DocumentParsers,
     parsers::extract_text,
-    progress::{Cancel as _, CancellationToken},
+    progress::{Cancel as _, CancellationToken, ProgressEvent},
     types::{ChatConfig, ParseConfig},
 };
 use serde_json::Value;
@@ -26,12 +28,14 @@ use serde_json::Value;
 use crate::references::{ReferenceEntry, load_entries};
 
 use super::{
-    CitationCheckRequest, CitationCheckRow, CitationCheckSummary, LibraryDocument, LibrarySnapshot,
-    QuoteQuality, RagEvent, RequestId,
+    CitationCheckRequest, CitationCheckRow, CitationCheckSummary, CitationProgress,
+    LibraryDocument, LibrarySnapshot, QuoteQuality, RagEvent, RequestId,
 };
 
 /// How many citations are checked at the same time.
 const CHECK_CONCURRENCY: usize = 4;
+/// Per-citation model budget when the chat config sets no request timeout.
+const DEFAULT_CHECK_TIMEOUT: Duration = Duration::from_secs(120);
 /// Sentence window before the cited sentence.
 const CONTEXT_BEFORE: usize = 3;
 /// Sentence window after the cited sentence.
@@ -173,6 +177,8 @@ pub(crate) async fn run(
         ..CitationCheckSummary::default()
     };
     let mut pending = Vec::new();
+    let mut early_done = 0usize;
+    let mut early_failed = 0usize;
     for (offset, mention) in mentions.into_iter().enumerate() {
         let index = offset + 1;
         let citation = format!("@{}", mention.key);
@@ -221,15 +227,45 @@ pub(crate) async fn run(
         if prepared.source.is_none() {
             let row = prepared.failed_row(&prepared.errors);
             summary.errors += 1;
+            early_done += 1;
+            early_failed += 1;
             let _ = events.send(RagEvent::CitationCheckRow { id, row }).await;
         } else {
             pending.push(prepared);
         }
     }
 
-    let agent = BatchAgent::new(generator).with_concurrency(CHECK_CONCURRENCY);
+    // Progress is measured against all mentions, not just the ones the model
+    // sees: citations that failed during resolution already have a row.
+    let finished = AtomicUsize::new(early_done);
+    let failed = AtomicUsize::new(early_failed);
+    let progress_events = events.clone();
+    let progress = move |event: &ProgressEvent| {
+        let ProgressEvent::BatchItemFinished { ok, .. } = event else {
+            return;
+        };
+        let done = finished.fetch_add(1, Ordering::Relaxed) + 1;
+        let failed = failed.fetch_add(usize::from(!ok), Ordering::Relaxed) + usize::from(!ok);
+        let _ = progress_events.try_send(RagEvent::CitationCheckProgress {
+            id,
+            progress: CitationProgress {
+                done,
+                failed,
+                total,
+            },
+        });
+    };
+
+    let timeout = chat
+        .request_timeout_secs
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_CHECK_TIMEOUT);
+    let agent = BatchAgent::new(generator)
+        .with_concurrency(CHECK_CONCURRENCY)
+        .with_timeout(timeout);
     let job = CitationBatch;
-    let mut checks = agent.stream(pending, &job, &cancel);
+    let mut checks = agent.stream_with_progress(pending, &job, Some(&progress), &cancel);
     while let Some(result) = checks.next().await {
         if cancel.is_cancelled() {
             drop(checks);

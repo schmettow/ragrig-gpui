@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- **`TaskProgress`** — a labelled progress bar with an optional detail line and
+  a stop button, for long-running background work (`src/task_progress.rs`).
+  Presentation only: the host supplies the fraction and the cancel callback.
+  The gallery shows it above the component list.
+- **Citation-check progress.** `CitationProgress` (done, failed, total) ships
+  with `fraction()` and `summary()`, `RagEvent::CitationCheckProgress` carries
+  it, and `RagController::citation_progress()` mirrors it.  The controller
+  seeds it from `CitationCheckStarted` and clears it on finish, failure, or
+  stop, so a host can render a live bar without counting rows itself.
+
 ### Changed
 
 - **Citation Check runs on `ragrig::BatchAgent`.** The per-citation worker is
@@ -16,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   row with `check failed: …` instead of dropping it (`src/rag/citation_check.rs`).
   Streaming, concurrency (4), per-row errors, and cancellation behaviour are
   unchanged; the local `check_one` fan-out is gone.
+- **Each citation now has a model timeout.** The check uses
+  `ChatConfig::request_timeout_secs` when set and otherwise 120 seconds;
+  `BatchAgent::with_timeout` turns a hung call into a row error instead of
+  stalling the run.  Progress events are derived from the batch worker, so
+  `done` advances when a citation finishes, not when its row reaches the UI.
 
 ### Dependencies
 

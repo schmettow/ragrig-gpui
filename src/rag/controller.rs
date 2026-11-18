@@ -17,6 +17,8 @@ use crate::model::{AgentComponent, ComponentKind, ComponentStatus, ComponentTogg
 #[cfg(feature = "grobid")]
 use crate::references::{ReferenceEntry, ReferenceOptions, ReferenceProgress, ReferenceReport};
 
+#[cfg(feature = "grobid")]
+use super::CitationProgress;
 use super::{
     AgentInfo, IngestProgress, LibrarySnapshot, PendingAttachment, RagCommand, RagEvent, RagSetup,
     RequestId, SessionInfo, actor, count_label,
@@ -41,6 +43,9 @@ pub struct RagController {
     /// The running citation check, if any.
     #[cfg(feature = "grobid")]
     citation_check: Option<RequestId>,
+    /// Completed and failed citations of the running check.
+    #[cfg(feature = "grobid")]
+    citation_progress: Option<CitationProgress>,
     ingest: Option<IngestProgress>,
     sync_request: Option<RequestId>,
     busy: bool,
@@ -99,6 +104,8 @@ impl RagController {
             session_preserves_context: false,
             #[cfg(feature = "grobid")]
             citation_check: None,
+            #[cfg(feature = "grobid")]
+            citation_progress: None,
             ingest: None,
             sync_request: None,
             busy: false,
@@ -316,6 +323,12 @@ impl RagController {
     #[cfg(feature = "grobid")]
     pub fn citation_check_request(&self) -> Option<RequestId> {
         self.citation_check
+    }
+
+    /// Completed and failed citations of the running check.
+    #[cfg(feature = "grobid")]
+    pub fn citation_progress(&self) -> Option<CitationProgress> {
+        self.citation_progress
     }
 
     /// Stop the running reference extraction.
@@ -753,17 +766,26 @@ impl RagController {
             #[cfg(feature = "grobid")]
             RagEvent::Citations { .. } => {}
             #[cfg(feature = "grobid")]
-            RagEvent::CitationCheckStarted { id, .. } => {
+            RagEvent::CitationCheckStarted { id, total, .. } => {
                 self.citation_check = Some(*id);
+                self.citation_progress = Some(CitationProgress {
+                    total: *total,
+                    ..CitationProgress::default()
+                });
                 self.last_error = None;
             }
             #[cfg(feature = "grobid")]
             RagEvent::CitationCheckRow { .. } => {}
             #[cfg(feature = "grobid")]
+            RagEvent::CitationCheckProgress { progress, .. } => {
+                self.citation_progress = Some(*progress);
+            }
+            #[cfg(feature = "grobid")]
             RagEvent::CitationCheckFinished { .. }
             | RagEvent::CitationCheckFailed { .. }
             | RagEvent::CitationCheckStopped { .. } => {
                 self.citation_check = None;
+                self.citation_progress = None;
                 if let RagEvent::CitationCheckFailed { message, .. } = &event {
                     self.last_error = Some(message.clone());
                 }

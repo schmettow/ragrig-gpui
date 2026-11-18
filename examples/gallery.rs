@@ -849,6 +849,12 @@ impl Render for ComponentsPanel {
         let components = self.state.read(cx).agent_components(cx);
         SidePanel::new("gallery-components", "Components")
             .subtitle("Live status of the mock pipeline")
+            .child(
+                TaskProgress::new("gallery-progress", "Indexing")
+                    .fraction(0.42)
+                    .detail("21 of 50 chunks")
+                    .on_cancel(|_, _| {}),
+            )
             .children(
                 components
                     .iter()

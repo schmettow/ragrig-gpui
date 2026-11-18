@@ -421,6 +421,7 @@ impl RagChat {
             #[cfg(feature = "grobid")]
             RagEvent::CitationCheckStarted { .. }
             | RagEvent::CitationCheckRow { .. }
+            | RagEvent::CitationCheckProgress { .. }
             | RagEvent::CitationCheckFinished { .. }
             | RagEvent::CitationCheckFailed { .. }
             | RagEvent::CitationCheckStopped { .. } => {}

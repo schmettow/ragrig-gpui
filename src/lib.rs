@@ -47,6 +47,7 @@ mod session_picker;
 mod setting_fields;
 mod settings;
 mod side_panel;
+mod task_progress;
 
 pub mod prelude;
 
@@ -91,6 +92,7 @@ pub use setting_fields::{
 };
 pub use settings::{chat_settings, chat_settings_page};
 pub use side_panel::SidePanel;
+pub use task_progress::TaskProgress;
 
 use gpui_kit::App;
 
