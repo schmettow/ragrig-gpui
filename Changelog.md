@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v0.14.0 — 2026-11-19
 
 ### Added
 
@@ -40,6 +40,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unreleased `1.5.0` `BatchAgent` (`Cargo.toml`).  **Release blocker:**
   publish `ragrig` 1.5.0 first, then pin this dependency to that version
   and drop the `path`.
+
+### Quality
+
+Release validation on 2026-11-19 (Cargo 1.99.0, rustc 1.99.0).
+
+**Test coverage.** `cargo llvm-cov --all-features --summary-only` (doctests
+are not measured on stable Rust):
+
+| Metric | Covered | Total | Cover |
+| --- | ---: | ---: | ---: |
+| Regions | 16,149 | 27,904 | 57.87% |
+| Functions | 1,185 | 2,091 | 56.67% |
+| Lines | 9,836 | 17,670 | 55.66% |
+
+`src/task_progress.rs` is at 100% lines.  `src/rag/citation_check.rs` is at
+59.12%, `src/rag/controller.rs` at 10.51%, and `src/rag/settings_page.rs` at
+0%: the headless GPUI surfaces and the worker-driven event loop remain outside
+the suite.  `src/rag/config.rs` is at 90.90% and `src/rag/actor.rs` at 70.43%.
+
+**Tests.** `cargo test --all-features`: 230 lib passed (4 ignored), 2 gallery,
+5 spike (1 ignored), and 2 doctests (1 ignored).
+
+**Checks.** `cargo fmt --check`, `cargo check --all-targets --all-features`,
+`cargo clippy --all-targets --all-features -- -D warnings`,
+`cargo doc --no-deps --all-features`, and `cargo package --list` (51 files) are
+green.  **Release blocker:** `cargo publish --dry-run` cannot resolve
+`ragrig = "^1.5"` until ragrig 1.5.0 is on crates.io; the `path` in the
+dependency is stripped when packaging.
 
 ## v0.13.0 — 2026-11-15
 

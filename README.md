@@ -195,7 +195,7 @@ host (e.g. examples/ragchat.rs)
   DockArea, panels, agent bar, session picker
         │
 ragrig-gpui
-  ChatView / Composer / AgentBar / SessionPicker / ...
+  ChatView / Composer / AgentBar / TaskProgress / SessionPicker / ...
   RagChat  ── transcript + attachments + composer wiring
   RagController ── commands/events, mirrored status
         │  bounded async_channel
@@ -235,8 +235,11 @@ ragrig-gpui
   in a corpus and embedded in the store, parses it, and asks an independent
   generator for a 1–5 verdict plus 1–3 quotes. Up to four citations run at
   once; `CitationCheckRow` / `CitationCheckSummary` carry the results, and
-  `QuoteQuality` reports the precise/fuzzy/no-match cascade. The chat session
-  is not touched, and `stop_citation_check` keeps completed rows.
+  `QuoteQuality` reports the precise/fuzzy/no-match cascade. `CitationProgress`
+  (with `fraction()` and `summary()`) trails the batch worker, so a host can
+  render `TaskProgress` — a labelled bar with a stop button — while the check
+  runs. The chat session is not touched, and `stop_citation_check` keeps
+  completed rows.
 - `RagChat::new(window, cx, controller)` wires the M1 primitives and re-emits
   `RagChatEvent`s for status, source clicks, and copy.
 - `RagSettings::to_setup()` validates and converts to `RagrigConfig` plus a
