@@ -38,7 +38,7 @@ comrak = "0.22"
 dirs = "5"
 futures-util = { version = "0.3", optional = true }
 gpui-kit = "0.9.1"
-ragrig = { version = "1.5", path = "../ragrig", optional = true }
+ragrig = { version = "1.5", optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"], optional = true }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "io-util"], optional = true }
@@ -56,8 +56,8 @@ async-trait = "0.1"
 gpui-kit = { version = "0.9.1", features = ["test-support"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
 
-# Development against the sibling checkout.  The `path` in the dependency is
-# stripped when the crate is published.
+# Development against the sibling grobid-bibtex checkout; uncomment while
+# testing it locally.
 # grobid-bibtex = { path = "../grobid-bibtex" }
 
 [[example]]

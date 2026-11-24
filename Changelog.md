@@ -36,10 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
-- `ragrig` is temporarily path-linked to `../ragrig` to build against the
-  unreleased `1.5.0` `BatchAgent` (`Cargo.toml`).  **Release blocker:**
-  publish `ragrig` 1.5.0 first, then pin this dependency to that version
-  and drop the `path`.
+- `ragrig` 1.5.0 is published; the dependency resolves from crates.io and the
+  former sibling `path` is gone (`Cargo.toml`, `Cargo.lock`).
 
 ### Quality
 
@@ -62,12 +60,15 @@ the suite.  `src/rag/config.rs` is at 90.90% and `src/rag/actor.rs` at 70.43%.
 **Tests.** `cargo test --all-features`: 230 lib passed (4 ignored), 2 gallery,
 5 spike (1 ignored), and 2 doctests (1 ignored).
 
-**Checks.** `cargo fmt --check`, `cargo check --all-targets --all-features`,
+**Checks.** `cargo fmt --check`, `cargo check --all-targets` (default
+features), `cargo check --all-targets --all-features`,
+`cargo clippy --all-targets -- -D warnings`,
 `cargo clippy --all-targets --all-features -- -D warnings`,
-`cargo doc --no-deps --all-features`, and `cargo package --list` (51 files) are
-green.  **Release blocker:** `cargo publish --dry-run` cannot resolve
-`ragrig = "^1.5"` until ragrig 1.5.0 is on crates.io; the `path` in the
-dependency is stripped when packaging.
+`cargo doc --no-deps --all-features`, `cargo package --list` (51 files), and
+`cargo publish --dry-run` are green.  The publish verification builds with
+default features and caught an ungated `impl CitationProgress` that the
+all-features and Scico builds could not see; the impl now carries the same
+`grobid` gate as its struct.  The package is 1.3 MiB (297 KiB compressed).
 
 ## v0.13.0 — 2026-11-15
 

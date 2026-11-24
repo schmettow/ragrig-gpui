@@ -485,6 +485,7 @@ pub struct CitationProgress {
     pub total: usize,
 }
 
+#[cfg(feature = "grobid")]
 impl CitationProgress {
     /// Completion in `0.0..=1.0`, when the total is known.
     pub fn fraction(&self) -> f32 {

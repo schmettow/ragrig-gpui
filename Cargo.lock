@@ -6608,6 +6608,8 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "ragrig"
 version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36f6016addc1cbd3633d6fb410b2647898e990bb8d8fa34655f4a312b1a3dbf2"
 dependencies = [
  "anyhow",
  "async-trait",
